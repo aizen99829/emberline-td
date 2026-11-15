@@ -1,6 +1,6 @@
 // EMBERLINE render: every pixel the player sees, drawn on one Canvas 2D context.
 // Pure drawing from state — no game logic here.
-import { CANVAS_W, CANVAS_H, PATH, CORE, PADS, PAD_RADIUS, PALETTE, TOWER_TYPES, TOWER_ORDER, ENEMY_TYPES, TOTAL_WAVES, TILE } from './config.js';
+import { CANVAS_W, CANVAS_H, PATH, CORE, PADS, PAD_RADIUS, PALETTE, TOWER_TYPES, TOWER_ORDER, ENEMY_TYPES, TOTAL_WAVES, TILE, WAVES, SURGE_WAVE, SURGE_COUNT } from './config.js';
 import { towerDamage, towerRange, towerRate, upgradeCost } from './towers.js';
 import { layout, formatGold } from './ui.js';
 
@@ -772,6 +772,10 @@ function drawFloaters(ctx, state) {
   for (const f of state.floaters) {
     ctx.globalAlpha = Math.max(0, f.life / f.maxLife);
     ctx.font = `bold ${f.size || 14}px sans-serif`;
+    // A dark outline keeps the numbers readable over bright combat.
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(5,3,12,0.65)';
+    ctx.strokeText(f.text, f.x, f.y);
     ctx.fillStyle = f.color;
     ctx.fillText(f.text, f.x, f.y);
   }
@@ -783,52 +787,162 @@ function drawGhost(ctx, state) {
   const pad = PADS[state.selectedPad];
   const def = TOWER_TYPES[state.ghostType];
   ctx.save();
-  ctx.globalAlpha = 0.25;
+  ctx.globalAlpha = 0.22;
   ctx.fillStyle = def.color;
   ctx.beginPath(); ctx.arc(pad.x, pad.y, towerRange({ type: state.ghostType, level: 1 }), 0, Math.PI * 2); ctx.fill();
   ctx.globalAlpha = 0.8;
   ctx.strokeStyle = def.color; ctx.lineWidth = 1.5;
+  ctx.setLineDash([8, 6]);
+  ctx.lineDashOffset = -state.time * 30;
   ctx.beginPath(); ctx.arc(pad.x, pad.y, towerRange({ type: state.ghostType, level: 1 }), 0, Math.PI * 2); ctx.stroke();
-  ctx.globalAlpha = 0.6;
-  ctx.fillStyle = def.color;
-  ctx.beginPath(); ctx.arc(pad.x, pad.y, 14, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  // The ghost is the tower itself, translucent — you see what you will get.
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  drawTowerShape(ctx, {
+    type: state.ghostType, x: pad.x, y: pad.y, angle: -Math.PI / 2,
+    level: 1, muzzle: 0, id: 99, padIndex: state.selectedPad, cooldown: 0,
+  }, state.time);
   ctx.restore();
 }
 
+// Small drawn icons for the HUD stats — shapes, not font glyphs, so they
+// render identically everywhere.
+function drawDiamondIcon(ctx, x, y, s, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(Math.PI / 4);
+  ctx.fillStyle = color;
+  ctx.fillRect(-s / 2, -s / 2, s, s);
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fillRect(-s / 2, -s / 2, s / 2, s / 2);
+  ctx.restore();
+}
+
+function drawHeartIcon(ctx, x, y, s, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(0, s * 0.55);
+  ctx.bezierCurveTo(-s * 0.95, -s * 0.05, -s * 0.55, -s * 0.75, 0, -s * 0.28);
+  ctx.bezierCurveTo(s * 0.55, -s * 0.75, s * 0.95, -s * 0.05, 0, s * 0.55);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function drawStarIcon(ctx, x, y, s, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + (Math.PI / 5) * i;
+    const r = i % 2 === 0 ? s : s * 0.45;
+    const px = Math.cos(a) * r, py = Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+// How far the current wave has been beaten back, 0..1 (null outside combat).
+function waveProgress(state) {
+  if (state.phase !== 'combat' || !state.spawner || state.wave < 1) return null;
+  const table = WAVES[state.wave - 1] || [];
+  let total = 0;
+  for (const [, count] of table) total += count;
+  if (state.wave === SURGE_WAVE) total += SURGE_COUNT;
+  if (total <= 0) return null;
+  return Math.max(0, Math.min(1, 1 - state.waveRemaining / total));
+}
+
 function drawHud(ctx, state, L) {
-  // Top bar.
-  ctx.fillStyle = 'rgba(10,8,24,0.78)';
+  // Top bar: a deep gradient panel with a gold trim line.
+  const bar = ctx.createLinearGradient(0, 0, 0, 46);
+  bar.addColorStop(0, 'rgba(16,12,34,0.92)');
+  bar.addColorStop(1, 'rgba(10,8,24,0.78)');
+  ctx.fillStyle = bar;
   ctx.fillRect(0, 0, CANVAS_W, 46);
+  const trim = ctx.createLinearGradient(0, 0, CANVAS_W, 0);
+  trim.addColorStop(0, 'rgba(255,207,77,0)');
+  trim.addColorStop(0.25, 'rgba(255,207,77,0.65)');
+  trim.addColorStop(0.75, 'rgba(255,207,77,0.65)');
+  trim.addColorStop(1, 'rgba(255,207,77,0)');
+  ctx.fillStyle = trim;
+  ctx.fillRect(0, 45, CANVAS_W, 1.5);
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.font = 'bold 18px sans-serif';
+  drawDiamondIcon(ctx, 24, 23, 13, PALETTE.gold);
   ctx.fillStyle = PALETTE.gold;
-  ctx.fillText(`◆ ${formatGold(state.eco.gold)} gold`, 16, 24);
+  ctx.fillText(`${formatGold(state.eco.gold)} gold`, 38, 24);
+  drawHeartIcon(ctx, 196, 23, 15, state.eco.lives <= 5 ? PALETTE.danger : '#ff7d95');
   ctx.fillStyle = state.eco.lives <= 5 ? PALETTE.danger : PALETTE.text;
-  ctx.fillText(`♥ ${state.eco.lives} core`, 190, 24);
-  ctx.fillStyle = PALETTE.text;
-  ctx.fillText(`Wave ${Math.max(1, state.wave)} / ${TOTAL_WAVES}`, 330, 24);
-  ctx.fillText(`Score ${state.eco.score}`, 470, 24);
-  if (state.phase === 'combat' && state.spawner) {
-    const remaining = state.waveRemaining;
-    ctx.fillStyle = PALETTE.textDim;
-    ctx.font = '16px sans-serif';
-    ctx.fillText(`enemies left: ${remaining}`, 620, 24);
+  ctx.fillText(`${state.eco.lives} core`, 210, 24);
+  // Wave chevrons.
+  ctx.fillStyle = '#8a5cff';
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.moveTo(322 + i * 9, 16);
+    ctx.lineTo(329 + i * 9, 23);
+    ctx.lineTo(322 + i * 9, 30);
+    ctx.lineTo(325 + i * 9, 23);
+    ctx.closePath(); ctx.fill();
   }
+  ctx.fillStyle = PALETTE.text;
+  ctx.fillText(`Wave ${Math.max(1, state.wave)} / ${TOTAL_WAVES}`, 356, 24);
+  drawStarIcon(ctx, 506, 23, 9, '#ffd76a');
+  ctx.fillText(`Score ${state.eco.score}`, 520, 24);
+  if (state.phase === 'combat' && state.spawner) {
+    ctx.fillStyle = PALETTE.textDim;
+    ctx.font = '15px sans-serif';
+    ctx.fillText(`enemies left: ${state.waveRemaining}`, 660, 24);
+  }
+  // Campaign progress: a slim bar under the top panel — waves banked plus
+  // the live fraction of the wave being fought, with a tick per wave.
+  const prog = waveProgress(state);
+  const frac = Math.max(0, Math.min(1, (state.eco.wavesCleared + (prog || 0)) / TOTAL_WAVES));
+  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  roundRect(ctx, 16, 52, 420, 6, 3);
+  ctx.fill();
+  if (frac > 0) {
+    const fill = ctx.createLinearGradient(16, 0, 436, 0);
+    fill.addColorStop(0, '#ff8a3d');
+    fill.addColorStop(1, '#ffd76a');
+    ctx.fillStyle = fill;
+    roundRect(ctx, 16, 52, Math.max(6, 420 * frac), 6, 3);
+    ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(10,8,24,0.8)';
+  for (let i = 1; i < TOTAL_WAVES; i++) ctx.fillRect(16 + (420 / TOTAL_WAVES) * i - 0.75, 52, 1.5, 6);
   // Top-right buttons.
   for (const b of L.hudButtons) {
-    ctx.fillStyle = b.active ? '#3a2f63' : '#241d3d';
+    const bg = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
+    bg.addColorStop(0, b.active ? '#4a3a80' : '#2e2450');
+    bg.addColorStop(1, b.active ? '#3a2f63' : '#241d3d');
+    ctx.fillStyle = bg;
     roundRect(ctx, b.x, b.y, b.w, b.h, 6);
     ctx.fill();
-    ctx.strokeStyle = '#6b5a9e'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = b.active ? '#c9b6ff' : '#6b5a9e'; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.fillStyle = PALETTE.text;
     ctx.font = 'bold 14px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
   }
-  // Start-wave button during build phase.
+  // Start-wave button during build phase, breathing with a gold glow.
   if (state.mode === 'playing' && state.phase === 'build' && L.startWaveButton) {
     const b = L.startWaveButton;
-    ctx.fillStyle = '#7a4d00';
+    const glowA = 0.25 + 0.2 * Math.sin(state.time * 3.2);
+    ctx.save();
+    ctx.globalAlpha = glowA;
+    ctx.fillStyle = PALETTE.gold;
+    roundRect(ctx, b.x - 4, b.y - 4, b.w + 8, b.h + 8, 11);
+    ctx.fill();
+    ctx.restore();
+    const bg = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
+    bg.addColorStop(0, '#a86e00');
+    bg.addColorStop(1, '#7a4d00');
+    ctx.fillStyle = bg;
     roundRect(ctx, b.x, b.y, b.w, b.h, 8);
     ctx.fill();
     ctx.strokeStyle = PALETTE.gold; ctx.lineWidth = 2; ctx.stroke();
@@ -837,40 +951,106 @@ function drawHud(ctx, state, L) {
     ctx.textAlign = 'center';
     ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
   }
-  // Wave banner.
+  // Wave banner on a dark pill, so it reads over bright combat.
   if (state.waveBanner && state.waveBanner.t > 0) {
     ctx.save();
     ctx.globalAlpha = Math.min(1, state.waveBanner.t);
     ctx.font = 'bold 44px sans-serif';
+    const w = ctx.measureText(state.waveBanner.text).width + 64;
+    ctx.fillStyle = 'rgba(8,5,18,0.55)';
+    roundRect(ctx, CANVAS_W / 2 - w / 2, 118, w, 62, 14);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,207,77,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd76a';
     ctx.shadowColor = '#ff6a00'; ctx.shadowBlur = 24;
     ctx.fillText(state.waveBanner.text, CANVAS_W / 2, 150);
     ctx.restore();
   }
-  // Kill-streak: a live counter by the score, and a shout when a milestone lands.
+  // Kill-streak: a live counter pill by the score, and a shout on milestones.
   if (state.streak >= 3 && state.mode === 'playing') {
-    ctx.fillStyle = '#ff9a3d';
+    const label = `🔥 streak x${state.streak}`;
     ctx.font = 'bold 16px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(`🔥 streak x${state.streak}`, 806, 24);
+    const w = ctx.measureText(label).width + 22;
+    const pulse = 1 + Math.sin(state.time * 6) * 0.03;
+    ctx.save();
+    ctx.translate(868, 23);
+    ctx.scale(pulse, pulse);
+    const bg = ctx.createLinearGradient(0, -13, 0, 13);
+    bg.addColorStop(0, 'rgba(122,45,0,0.9)');
+    bg.addColorStop(1, 'rgba(74,22,0,0.9)');
+    ctx.fillStyle = bg;
+    roundRect(ctx, -w / 2, -13, w, 26, 13);
+    ctx.fill();
+    ctx.strokeStyle = '#ff9a3d'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#ffb35c';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, 0, 1);
+    ctx.restore();
   }
   if (state.streakBanner && state.streakBanner.t > 0) {
     ctx.save();
     ctx.globalAlpha = Math.min(1, state.streakBanner.t);
     ctx.font = 'bold 30px sans-serif';
+    const w = ctx.measureText(state.streakBanner.text).width + 44;
+    ctx.fillStyle = 'rgba(40,12,0,0.55)';
+    roundRect(ctx, CANVAS_W / 2 - w / 2, 190, w, 44, 12);
+    ctx.fill();
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffb020';
     ctx.shadowColor = '#ff4400'; ctx.shadowBlur = 16;
-    ctx.fillText(state.streakBanner.text, CANVAS_W / 2, 196);
+    ctx.fillText(state.streakBanner.text, CANVAS_W / 2, 213);
     ctx.restore();
   }
+}
+
+// A compact tower glyph on a dark chip — the icon language of the menus.
+function drawTowerGlyph(ctx, type, cx, cy, s) {
+  const def = TOWER_TYPES[type];
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = def.dark;
+  roundRect(ctx, -s / 2, -s / 2, s, s, 7);
+  ctx.fill();
+  ctx.strokeStyle = def.color; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = def.color;
+  ctx.strokeStyle = def.color;
+  if (type === 'spark') {
+    // Lightning bolt.
+    ctx.beginPath();
+    ctx.moveTo(2.5, -8); ctx.lineTo(-4.5, 1); ctx.lineTo(-0.5, 1); ctx.lineTo(-2.5, 8); ctx.lineTo(4.5, -1); ctx.lineTo(0.5, -1);
+    ctx.closePath(); ctx.fill();
+  } else if (type === 'frost') {
+    // Snowflake.
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      const a = (Math.PI / 3) * i;
+      ctx.beginPath();
+      ctx.moveTo(-Math.cos(a) * 7.5, -Math.sin(a) * 7.5);
+      ctx.lineTo(Math.cos(a) * 7.5, Math.sin(a) * 7.5);
+      ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI * 2); ctx.fill();
+  } else if (type === 'mortar') {
+    // A shell with a fuse stem.
+    ctx.beginPath(); ctx.arc(0, 1.5, 5.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(-1.6, -9, 3.2, 5.5);
+  } else {
+    // Lance: a long piercing arrowhead.
+    ctx.beginPath();
+    ctx.moveTo(-8.5, -3.6); ctx.lineTo(8.5, 0); ctx.lineTo(-8.5, 3.6);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawBuildMenu(ctx, state, L) {
   const m = L.buildMenu;
   if (!m) return;
-  ctx.fillStyle = 'rgba(10,8,24,0.92)';
+  const panel = ctx.createLinearGradient(0, m.y, 0, m.y + m.h);
+  panel.addColorStop(0, 'rgba(18,14,38,0.95)');
+  panel.addColorStop(1, 'rgba(10,8,24,0.93)');
+  ctx.fillStyle = panel;
   roundRect(ctx, m.x, m.y, m.w, m.h, 10);
   ctx.fill();
   ctx.strokeStyle = '#6b5a9e'; ctx.lineWidth = 2; ctx.stroke();
@@ -881,18 +1061,30 @@ function drawBuildMenu(ctx, state, L) {
   for (const card of m.cards) {
     const def = TOWER_TYPES[card.type];
     const afford = state.eco.gold >= def.cost;
-    ctx.fillStyle = afford ? '#241d3d' : '#1a1428';
+    const cardBg = ctx.createLinearGradient(0, card.y, 0, card.y + card.h);
+    cardBg.addColorStop(0, afford ? '#2b2150' : '#1d1733');
+    cardBg.addColorStop(1, afford ? '#241d3d' : '#1a1428');
+    ctx.fillStyle = cardBg;
     roundRect(ctx, card.x, card.y, card.w, card.h, 8);
     ctx.fill();
     ctx.strokeStyle = afford ? def.color : '#4a3f6e'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = def.color;
-    ctx.beginPath(); ctx.arc(card.x + 22, card.y + 22, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.save();
+    if (!afford) ctx.globalAlpha = 0.45;
+    drawTowerGlyph(ctx, card.type, card.x + 25, card.y + 25, 32);
+    ctx.restore();
     ctx.fillStyle = afford ? PALETTE.text : PALETTE.textDim;
     ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(`${def.name} — ◆ ${def.cost}`, card.x + 40, card.y + 18);
-    ctx.font = '12px sans-serif';
+    ctx.fillText(`${def.name} — ◆ ${def.cost}`, card.x + 50, card.y + 18);
     ctx.fillStyle = PALETTE.textDim;
-    ctx.fillText(def.desc, card.x + 40, card.y + 38);
+    // Shrink the description until it fits the card — the Lance text is long.
+    let descSize = 12;
+    ctx.font = `${descSize}px sans-serif`;
+    while (ctx.measureText(def.desc).width > card.w - 64 && descSize > 9) {
+      descSize -= 0.5;
+      ctx.font = `${descSize}px sans-serif`;
+    }
+    ctx.fillText(def.desc, card.x + 50, card.y + 38);
+    ctx.font = '12px sans-serif';
     ctx.fillText(`DMG ${def.damage} · RNG ${def.range} · ${def.rate}/s`, card.x + 14, card.y + 60);
   }
   ctx.fillStyle = PALETTE.textDim;
@@ -905,14 +1097,18 @@ function drawTowerMenu(ctx, state, L) {
   if (!m) return;
   const t = m.tower;
   const def = TOWER_TYPES[t.type];
-  ctx.fillStyle = 'rgba(10,8,24,0.92)';
+  const panel = ctx.createLinearGradient(0, m.y, 0, m.y + m.h);
+  panel.addColorStop(0, 'rgba(18,14,38,0.95)');
+  panel.addColorStop(1, 'rgba(10,8,24,0.93)');
+  ctx.fillStyle = panel;
   roundRect(ctx, m.x, m.y, m.w, m.h, 10);
   ctx.fill();
   ctx.strokeStyle = def.color; ctx.lineWidth = 2; ctx.stroke();
+  drawTowerGlyph(ctx, t.type, m.x + 27, m.y + 25, 28);
   ctx.fillStyle = def.color;
   ctx.font = 'bold 16px sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText(`${def.name}  ${'●'.repeat(t.level)}${'○'.repeat(3 - t.level)}`, m.x + 14, m.y + 24);
+  ctx.fillText(`${def.name}  ${'●'.repeat(t.level)}${'○'.repeat(3 - t.level)}`, m.x + 50, m.y + 24);
   ctx.fillStyle = PALETTE.text;
   ctx.font = '14px sans-serif';
   ctx.fillText(`Damage ${Math.round(towerDamage(t))}   Range ${Math.round(towerRange(t))}   Rate ${towerRate(t).toFixed(2)}/s`, m.x + 14, m.y + 48);
@@ -932,27 +1128,119 @@ function drawTowerMenu(ctx, state, L) {
   }
 }
 
+// The Colossus as a title-screen menace: a black bulk with a burning rim,
+// crown and eyes, drawn big at the frame's edge.
+function drawBossSilhouette(ctx, x, y, s, time) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  const halo = ctx.createRadialGradient(0, 0, 6, 0, 0, 54);
+  halo.addColorStop(0, 'rgba(255,45,85,0.30)');
+  halo.addColorStop(1, 'rgba(255,45,85,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath(); ctx.arc(0, 0, 54, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath(); ctx.ellipse(0, 30, 30, 9, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#140510';
+  ctx.beginPath(); ctx.arc(0, 0, 30, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,45,85,0.65)'; ctx.lineWidth = 2; ctx.stroke();
+  // Crown, rimmed in gold.
+  ctx.strokeStyle = 'rgba(255,176,32,0.8)';
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * 12 - 5, -26); ctx.lineTo(i * 12, i === 0 ? -45 : -41); ctx.lineTo(i * 12 + 5, -26);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // Burning eyes, flickering.
+  ctx.save();
+  ctx.shadowColor = '#ff2d55'; ctx.shadowBlur = 12;
+  ctx.fillStyle = '#ff5a76';
+  ctx.globalAlpha = 0.85 + 0.15 * Math.sin(time * 7);
+  ctx.beginPath(); ctx.arc(-10, -6, 4, 0, Math.PI * 2); ctx.arc(10, -6, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  // A molten crack down the chest.
+  ctx.strokeStyle = 'rgba(255,120,60,0.75)'; ctx.lineWidth = 1.8;
+  ctx.beginPath(); ctx.moveTo(2, 8); ctx.lineTo(-3, 18); ctx.lineTo(3, 27); ctx.stroke();
+  ctx.restore();
+}
+
+function drawScuttlerSilhouette(ctx, x, y, s) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  ctx.fillStyle = '#140510';
+  ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,154,61,0.6)'; ctx.lineWidth = 1.4; ctx.stroke();
+  ctx.fillStyle = '#ff9a3d';
+  ctx.beginPath(); ctx.arc(-4, -3, 1.8, 0, Math.PI * 2); ctx.arc(4, -3, 1.8, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
 function drawTitle(ctx, state, L) {
-  ctx.fillStyle = 'rgba(8,6,20,0.55)';
+  // A cinematic gradient wash, darkest at the top and bottom of the frame.
+  const wash = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+  wash.addColorStop(0, 'rgba(6,4,16,0.66)');
+  wash.addColorStop(0.45, 'rgba(6,4,16,0.40)');
+  wash.addColorStop(1, 'rgba(6,4,16,0.72)');
+  ctx.fillStyle = wash;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  // The Colossus looms at the right edge; two scuttlers trail it.
+  drawBossSilhouette(ctx, 1052, 430, 2.05, state.time);
+  drawScuttlerSilhouette(ctx, 928, 500, 1.25);
+  drawScuttlerSilhouette(ctx, 962, 528, 1.0);
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#ffd76a';
-  ctx.font = 'bold 72px sans-serif';
-  ctx.shadowColor = '#ff6a00'; ctx.shadowBlur = 32;
-  ctx.fillText('EMBERLINE', CANVAS_W / 2, 190);
+  ctx.textBaseline = 'middle';
+  // The EMBERLINE logotype: ember-gradient letters with a hot glow.
+  ctx.letterSpacing = '7px';
+  ctx.font = 'bold 86px sans-serif';
+  const lg = ctx.createLinearGradient(0, 128, 0, 205);
+  lg.addColorStop(0, '#fff6d8');
+  lg.addColorStop(0.45, '#ffd76a');
+  lg.addColorStop(1, '#ff8a3d');
+  ctx.fillStyle = lg;
+  ctx.shadowColor = '#ff6a00'; ctx.shadowBlur = 34;
+  ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(90,30,0,0.85)';
+  ctx.strokeText('EMBERLINE', CANVAS_W / 2, 172);
+  ctx.fillText('EMBERLINE', CANVAS_W / 2, 172);
   ctx.shadowBlur = 0;
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = '28px sans-serif';
-  ctx.fillText('Hold the Last Light', CANVAS_W / 2, 232);
+  ctx.letterSpacing = '0px';
+  // Subtitle in a pill.
+  const sub = 'HOLD THE LAST LIGHT';
+  ctx.font = 'bold 25px sans-serif';
+  const sw = ctx.measureText(sub).width + 54;
+  ctx.fillStyle = 'rgba(20,10,0,0.55)';
+  roundRect(ctx, CANVAS_W / 2 - sw / 2, 206, sw, 40, 20);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,207,77,0.6)'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = '#ffe9a8';
+  ctx.fillText(sub, CANVAS_W / 2, 227);
+  // A flame rule with a diamond heart.
+  const rule = ctx.createLinearGradient(CANVAS_W / 2 - 210, 0, CANVAS_W / 2 + 210, 0);
+  rule.addColorStop(0, 'rgba(255,138,61,0)');
+  rule.addColorStop(0.5, 'rgba(255,183,61,0.9)');
+  rule.addColorStop(1, 'rgba(255,138,61,0)');
+  ctx.fillStyle = rule;
+  ctx.fillRect(CANVAS_W / 2 - 210, 261, 420, 2.5);
+  drawDiamondIcon(ctx, CANVAS_W / 2, 262, 9, '#ffd76a');
   ctx.font = '17px sans-serif';
   ctx.fillStyle = PALETTE.textDim;
-  ctx.fillText('Ember-creatures march the valley path. Build towers on the stone pads.', CANVAS_W / 2, 280);
-  ctx.fillText('Stop them before they reach the Core. Survive all 12 waves — the Ember Colossus waits on 12.', CANVAS_W / 2, 306);
+  ctx.fillText('Ember-creatures march the valley path. Build towers on the stone pads.', CANVAS_W / 2, 292);
+  ctx.fillText('Stop them before they reach the Core. Survive all 12 waves — the Ember Colossus waits on 12.', CANVAS_W / 2, 318);
   ctx.fillStyle = PALETTE.text;
   ctx.font = '15px sans-serif';
-  ctx.fillText('Click a pad to build · Click a tower to upgrade or sell · P pause · Space speed · M mute · R restart', CANVAS_W / 2, 352);
+  ctx.fillText('Click a pad to build · Click a tower to upgrade or sell · P pause · Space speed · M mute · R restart', CANVAS_W / 2, 356);
   const b = L.startButton;
-  ctx.fillStyle = '#7a4d00';
+  const glowA = 0.22 + 0.18 * Math.sin(state.time * 3.2);
+  ctx.save();
+  ctx.globalAlpha = glowA;
+  ctx.fillStyle = PALETTE.gold;
+  roundRect(ctx, b.x - 5, b.y - 5, b.w + 10, b.h + 10, 13);
+  ctx.fill();
+  ctx.restore();
+  const bg = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
+  bg.addColorStop(0, '#b57e00');
+  bg.addColorStop(1, '#7a4d00');
+  ctx.fillStyle = bg;
   roundRect(ctx, b.x, b.y, b.w, b.h, 10);
   ctx.fill();
   ctx.strokeStyle = PALETTE.gold; ctx.lineWidth = 2.5; ctx.stroke();
@@ -965,17 +1253,103 @@ function drawTitle(ctx, state, L) {
   ctx.fillText('Set each tower to target First, Strong or Close · Sell any tower back for 70% · Beware the wave-6 Ember Surge', CANVAS_W / 2, 526);
 }
 
+// The Core crystal as an end-screen emblem: radiant and rayed on victory,
+// dark and cracked on defeat.
+function drawCoreEmblem(ctx, x, y, s, time, victory) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  if (victory) {
+    // Rotating rays and a wide halo.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 8; i++) {
+      const a = time * 0.1 + (Math.PI / 4) * i;
+      ctx.save();
+      ctx.rotate(a);
+      ctx.globalAlpha = 0.06 + 0.03 * Math.sin(time * 1.6 + i * 1.9);
+      ctx.fillStyle = '#ffcf6a';
+      ctx.beginPath();
+      ctx.moveTo(0, 0); ctx.lineTo(105, -10); ctx.lineTo(105, 10);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+    const halo = ctx.createRadialGradient(0, 0, 4, 0, 0, 62);
+    halo.addColorStop(0, 'rgba(255,215,106,0.5)');
+    halo.addColorStop(1, 'rgba(255,180,60,0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(0, 0, 62, 0, Math.PI * 2); ctx.fill();
+  } else {
+    const halo = ctx.createRadialGradient(0, 0, 4, 0, 0, 52);
+    halo.addColorStop(0, 'rgba(255,45,85,0.22)');
+    halo.addColorStop(1, 'rgba(255,45,85,0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(0, 0, 52, 0, Math.PI * 2); ctx.fill();
+    ctx.rotate(0.16); // the fallen crystal lists to one side
+  }
+  const r = 34;
+  ctx.fillStyle = victory ? '#e8a83e' : '#3a2b33';
+  ctx.beginPath();
+  ctx.moveTo(0, -r); ctx.lineTo(0, r); ctx.lineTo(-r * 0.72, 0);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = victory ? '#ffd76a' : '#57404c';
+  ctx.beginPath();
+  ctx.moveTo(0, -r); ctx.lineTo(r * 0.72, 0); ctx.lineTo(0, r);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = victory ? PALETTE.coreInner : '#6e5560';
+  ctx.beginPath();
+  ctx.moveTo(0, -r); ctx.lineTo(r * 0.72, 0); ctx.lineTo(0, 0);
+  ctx.closePath(); ctx.fill();
+  if (victory) {
+    const pulse = 1 + 0.1 * Math.sin(time * 2.4);
+    const heart = ctx.createRadialGradient(0, 0, 0, 0, 0, 13 * pulse);
+    heart.addColorStop(0, 'rgba(255,255,255,0.95)');
+    heart.addColorStop(0.55, 'rgba(255,240,190,0.55)');
+    heart.addColorStop(1, 'rgba(255,240,190,0)');
+    ctx.fillStyle = heart;
+    ctx.beginPath(); ctx.arc(0, 0, 13 * pulse, 0, Math.PI * 2); ctx.fill();
+  } else {
+    // Cracks across the dead crystal, one ember still smouldering.
+    ctx.strokeStyle = 'rgba(10,4,8,0.9)';
+    ctx.lineWidth = 2;
+    for (const crack of [[-6, -30, 2, -8, -4, 12], [4, -4, 14, 10, 8, 26], [-2, 2, -14, 14, -10, 24]]) {
+      ctx.beginPath();
+      ctx.moveTo(crack[0], crack[1]);
+      ctx.lineTo(crack[2], crack[3]);
+      ctx.lineTo(crack[4], crack[5]);
+      ctx.stroke();
+    }
+    ctx.fillStyle = `rgba(255,110,60,${0.45 + 0.3 * Math.sin(time * 2.1)})`;
+    ctx.beginPath(); ctx.arc(-3, 14, 2.4, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.strokeStyle = victory ? 'rgba(255,230,160,0.9)' : 'rgba(160,120,130,0.6)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, -r); ctx.lineTo(r * 0.72, 0); ctx.lineTo(0, r); ctx.lineTo(-r * 0.72, 0);
+  ctx.closePath(); ctx.stroke();
+  ctx.restore();
+}
+
 function drawEndScreen(ctx, state, L, victory) {
-  ctx.fillStyle = victory ? 'rgba(8,20,10,0.6)' : 'rgba(24,6,10,0.6)';
+  const wash = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+  if (victory) {
+    wash.addColorStop(0, 'rgba(10,24,12,0.62)');
+    wash.addColorStop(1, 'rgba(6,16,8,0.78)');
+  } else {
+    wash.addColorStop(0, 'rgba(26,6,12,0.66)');
+    wash.addColorStop(1, 'rgba(14,4,8,0.8)');
+  }
+  ctx.fillStyle = wash;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  drawCoreEmblem(ctx, CANVAS_W / 2, 108, 1.35, state.time, victory);
   ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
   ctx.fillStyle = victory ? '#ffd76a' : '#ff4d6a';
-  ctx.font = 'bold 56px sans-serif';
+  ctx.font = 'bold 54px sans-serif';
   ctx.shadowColor = victory ? '#ff6a00' : '#ff0033'; ctx.shadowBlur = 28;
-  ctx.fillText(victory ? 'THE LIGHT HOLDS' : 'THE CORE HAS FALLEN', CANVAS_W / 2, 180);
+  ctx.fillText(victory ? 'THE LIGHT HOLDS' : 'THE CORE HAS FALLEN', CANVAS_W / 2, 196);
   ctx.shadowBlur = 0;
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = '20px sans-serif';
   const rows = victory
     ? [
         `Waves cleared: ${state.eco.wavesCleared} / ${TOTAL_WAVES}`,
@@ -990,9 +1364,34 @@ function drawEndScreen(ctx, state, L, victory) {
         `Gold earned: ${state.eco.goldEarned}`,
         `SCORE: ${state.eco.score}`,
       ];
-  rows.forEach((r, i) => ctx.fillText(r, CANVAS_W / 2, 240 + i * 32));
+  // The run's numbers on a bordered panel.
+  const panelW = 452, panelH = rows.length * 32 + 26;
+  const panelY = 232;
+  ctx.fillStyle = 'rgba(8,6,18,0.72)';
+  roundRect(ctx, CANVAS_W / 2 - panelW / 2, panelY, panelW, panelH, 12);
+  ctx.fill();
+  ctx.strokeStyle = victory ? 'rgba(255,207,77,0.65)' : 'rgba(255,77,106,0.55)';
+  ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.font = '20px sans-serif';
+  rows.forEach((r, i) => {
+    const last = i === rows.length - 1;
+    ctx.fillStyle = last ? (victory ? '#ffd76a' : '#ff8fa0') : PALETTE.text;
+    if (last) ctx.font = 'bold 22px sans-serif';
+    ctx.fillText(r, CANVAS_W / 2, panelY + 30 + i * 32);
+    if (last) ctx.font = '20px sans-serif';
+  });
   const b = L.restartButton;
-  ctx.fillStyle = '#7a4d00';
+  const glowA = 0.2 + 0.16 * Math.sin(state.time * 3.2);
+  ctx.save();
+  ctx.globalAlpha = glowA;
+  ctx.fillStyle = PALETTE.gold;
+  roundRect(ctx, b.x - 5, b.y - 5, b.w + 10, b.h + 10, 13);
+  ctx.fill();
+  ctx.restore();
+  const bg = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
+  bg.addColorStop(0, '#b57e00');
+  bg.addColorStop(1, '#7a4d00');
+  ctx.fillStyle = bg;
   roundRect(ctx, b.x, b.y, b.w, b.h, 10);
   ctx.fill();
   ctx.strokeStyle = PALETTE.gold; ctx.lineWidth = 2.5; ctx.stroke();
@@ -1013,7 +1412,37 @@ function drawPaused(ctx, state) {
   ctx.fillText('Press P to resume · R to restart', CANVAS_W / 2, CANVAS_H / 2 + 30);
 }
 
-// Decorative towers behind the title screen, so the cover reads as a game at a glance.
+// A tower as a title-screen silhouette: black shape, rim light in its own
+// colour, and one lit point — its heart.
+function drawTowerSilhouette(ctx, d) {
+  const def = TOWER_TYPES[d.type];
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.ellipse(0, 13, 19, 7, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#0d0a1e';
+  ctx.beginPath(); ctx.arc(0, 0, 17, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = def.color; ctx.globalAlpha = 0.75; ctx.lineWidth = 1.6; ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.rotate(d.angle);
+  if (d.type === 'spark') {
+    ctx.fillRect(0, -3, 20, 6); ctx.strokeRect(0, -3, 20, 6);
+  } else if (d.type === 'frost') {
+    ctx.beginPath();
+    ctx.moveTo(0, -7); ctx.lineTo(19, 0); ctx.lineTo(0, 7);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  } else if (d.type === 'lance') {
+    ctx.fillRect(0, -2.5, 32, 5); ctx.strokeRect(0, -2.5, 32, 5);
+  } else {
+    ctx.fillRect(-2, -6.5, 21, 13); ctx.strokeRect(-2, -6.5, 21, 13);
+  }
+  ctx.restore();
+  ctx.fillStyle = def.color;
+  ctx.beginPath(); ctx.arc(d.x, d.y, 3, 0, Math.PI * 2); ctx.fill();
+}
+
+// Silhouetted towers on their pads behind the title, so the cover reads as
+// a game at a glance.
 function drawTitleBackdropTowers(ctx) {
   const demo = [
     { type: 'spark', x: 200, y: 180, angle: 0.6 },
@@ -1021,9 +1450,7 @@ function drawTitleBackdropTowers(ctx) {
     { type: 'mortar', x: 780, y: 515, angle: 2.4 },
     { type: 'lance', x: 1080, y: 345, angle: 2.8 },
   ];
-  for (const d of demo) {
-    drawTowerShape(ctx, { ...d, level: 2, muzzle: 0, id: 0, padIndex: 0, cooldown: 0 }, 0);
-  }
+  for (const d of demo) drawTowerSilhouette(ctx, d);
 }
 
 // The one draw call the main loop makes.

@@ -5,7 +5,7 @@ import {
 } from './config.js';
 import { createEconomy, spend, rewardKill, rewardWaveClear, leakEnemy, sellRefund, victoryBonus, canAfford, applyStreakBonus } from './economy.js';
 import { spawnEnemy, updateEnemies, splitEnemy, pointAt } from './enemies.js';
-import { buildTower, updateTowers, updateProjectiles, upgradeTower, upgradeCost, towerCost } from './towers.js';
+import { buildTower, updateTowers, updateProjectiles, upgradeTower, upgradeCost, towerCost, towerDamage } from './towers.js';
 import { createSpawner, updateSpawner, waveIsOver, waveRemaining } from './waves.js';
 import { drawGame } from './render.js';
 import { attachInput, resolveClick } from './input.js';
@@ -135,6 +135,12 @@ function processDeaths() {
     const gold = rewardKill(state.eco, e.reward, state.wave);
     addFloater(e.x, e.y - 14, `+${gold}`, '#ffcf4d', 13);
     burst(e.x, e.y, e.color, e.type === 'boss' ? 40 : 8, 90, 3);
+    if (e.type === 'boss') {
+      // The Colossus going down should shake the valley (visual only).
+      burst(e.x, e.y, '#ffd76a', 24, 170, 4);
+      state.shake = Math.max(state.shake, 11);
+      addFloater(e.x, e.y - 34, 'COLOSSUS DOWN!', '#ffd76a', 22);
+    }
     if (state.time - state.coinTimer > 0.09) { sfx.coin(); state.coinTimer = state.time; }
     noteStreakKill();
     if (e.splits) newborn.push(...splitEnemy(e, state.wave));
@@ -149,6 +155,12 @@ function onTowerEvent(ev) {
       x1: ev.tower.x, y1: ev.tower.y, x2: ev.target.x, y2: ev.target.y,
       color: ev.tower.type === 'frost' ? '#4fe0d0' : '#ffb020', life: 0.12, maxLife: 0.12,
     });
+    // A small floating damage number where the bolt landed (visual only).
+    addFloater(
+      ev.target.x, ev.target.y - ev.target.radius - 8,
+      `${Math.round(towerDamage(ev.tower))}`,
+      ev.tower.type === 'frost' ? '#9be8ff' : '#ffd76a', 11,
+    );
     if (ev.tower.type === 'frost') sfx.frost(); else sfx.shoot();
     if (ev.killed) sfx.hit();
   } else if (ev.kind === 'beam') {
@@ -156,6 +168,15 @@ function onTowerEvent(ev) {
       x1: ev.tower.x, y1: ev.tower.y, x2: ev.x2, y2: ev.y2,
       color: '#e3c8ff', width: 3, life: 0.18, maxLife: 0.18,
     });
+    // One number for the whole beam: its damage times everything it pierced.
+    if (ev.hits.length > 0) {
+      const first = ev.hits[0].target;
+      addFloater(
+        first.x, first.y - first.radius - 10,
+        `${Math.round(towerDamage(ev.tower))} ×${ev.hits.length}`,
+        '#e3c8ff', 13,
+      );
+    }
     sfx.lance();
     if (ev.hits.some((h) => h.killed)) sfx.hit();
   } else if (ev.kind === 'chain') {
