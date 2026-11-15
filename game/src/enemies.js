@@ -54,6 +54,7 @@ export function spawnEnemy(type, wave) {
     color: def.color,
     score: def.score,
     splits: def.splits || null,
+    shielded: false, // inside an Aegis aura this tick (set by updateEnemies)
     slowResist: def.slowResist || 0,
     slowUntil: 0,
     slowPct: 0,
@@ -76,9 +77,15 @@ export function applySlow(enemy, pct, duration, now) {
   enemy.slowUntil = now + duration;
 }
 
-// Damage one enemy. Armour shaves flat damage (min 1). Returns true if it died.
-export function damageEnemy(enemy, rawDamage, now) {
-  const dealt = Math.max(1, Math.round(rawDamage - enemy.armour));
+// Damage one enemy. Armour shaves flat damage (min 1). Inside an Aegis aura
+// the hit is blunted first (the aura never protects an Aegis itself).
+// `enemies` is the whole field, used for the aura check; omit it and the
+// enemy's last computed `shielded` flag is trusted instead.
+// Returns true if it died.
+export function damageEnemy(enemy, rawDamage, now, enemies) {
+  const shielded = enemies ? isShielded(enemy, enemies) : enemy.shielded;
+  const blunted = shielded ? rawDamage * (1 - ENEMY_TYPES.aegis.auraDamageCut) : rawDamage;
+  const dealt = Math.max(1, Math.round(blunted - enemy.armour));
   enemy.hp -= dealt;
   enemy.flash = 0.08;
   if (enemy.hp <= 0) {
@@ -88,11 +95,25 @@ export function damageEnemy(enemy, rawDamage, now) {
   return false;
 }
 
+// Is this enemy currently inside a living Aegis aura? An Aegis shields its
+// allies only — never itself and never another Aegis — so killing the Aegis
+// first is always the right call. render.js draws the flag as a pale ring.
+export function isShielded(enemy, enemies) {
+  if (enemy.type === 'aegis') return false;
+  const aura = ENEMY_TYPES.aegis;
+  for (const a of enemies) {
+    if (a.type !== 'aegis' || a.dead || a.reachedCore || a === enemy) continue;
+    if (Math.hypot(a.x - enemy.x, a.y - enemy.y) <= aura.auraRadius) return true;
+  }
+  return false;
+}
+
 // Move every living enemy along the path for dt seconds.
 // Returns the enemies that reached the Core this tick.
 export function updateEnemies(enemies, dt, now) {
   const leaked = [];
   for (const e of enemies) {
+    e.shielded = !e.dead && !e.reachedCore && isShielded(e, enemies);
     if (e.dead || e.reachedCore) continue;
     if (e.flash > 0) e.flash -= dt;
     if (e.regen > 0 && e.hp < e.maxHp) e.hp = Math.min(e.maxHp, e.hp + e.regen * dt);

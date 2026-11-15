@@ -73,6 +73,7 @@ export const sfx = {
   shoot() { tone(880, 0.06, 'square', 0.05, 440); },
   frost() { tone(1200, 0.12, 'sine', 0.06, 700); },
   mortar() { noise(0.18, 0.12, 900); tone(160, 0.15, 'triangle', 0.08, 60); },
+  lance() { tone(140, 0.28, 'sawtooth', 0.1, 55); tone(1200, 0.1, 'square', 0.04, 300); noise(0.12, 0.06, 2400); },
   hit() { tone(220, 0.04, 'square', 0.03, 180); },
   coin() { tone(990, 0.07, 'sine', 0.06); setTimeout(() => tone(1320, 0.09, 'sine', 0.06), 55); },
   explosion() { noise(0.35, 0.22, 600); tone(90, 0.3, 'sine', 0.14, 40); },

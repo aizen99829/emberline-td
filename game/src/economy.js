@@ -1,7 +1,7 @@
 // EMBERLINE economy: gold, lives, kills, score. Pure numbers, no drawing.
 import {
   START_GOLD, START_LIVES, KILL_SCORE, WAVE_CLEAR_SCORE,
-  VICTORY_LIFE_SCORE, WAVE_CLEAR_BONUS, SELL_RATE,
+  VICTORY_LIFE_SCORE, WAVE_CLEAR_BONUS, SELL_RATE, STREAK_BONUS_GOLD,
 } from './config.js';
 
 // Fresh economy state for a new run.
@@ -57,6 +57,22 @@ export function leakEnemy(eco) {
 // Refund for selling a tower: 70% of everything invested in it.
 export function sellRefund(invested) {
   return Math.floor(invested * SELL_RATE);
+}
+
+// Gold bonus for a kill streak: every 10th chained kill pays a little extra.
+// Returns 0 for streaks that earn no bonus.
+export function streakBonusFor(streak) {
+  return streak > 0 && streak % 10 === 0 ? STREAK_BONUS_GOLD : 0;
+}
+
+// Pay the streak bonus into the economy. Returns the amount paid (maybe 0).
+export function applyStreakBonus(eco, streak) {
+  const bonus = streakBonusFor(streak);
+  if (bonus > 0) {
+    eco.gold += bonus;
+    eco.goldEarned += bonus;
+  }
+  return bonus;
 }
 
 // Final victory tally: remaining lives and banked gold join the score.

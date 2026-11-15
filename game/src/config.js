@@ -49,8 +49,14 @@ export const TOWER_TYPES = {
     desc: 'Slow lobbed shells. Huge splash damage, long range.',
     upgradeCost: [130, 210],
   },
+  lance: {
+    name: 'Lance', cost: 190, range: 300, damage: 55, rate: 0.42,
+    pierceWidth: 18, color: '#c792ff', dark: '#4a1e8a',
+    desc: 'Piercing beam. Slow, huge range, hits everything in line.',
+    upgradeCost: [160, 250],
+  },
 };
-export const TOWER_ORDER = ['spark', 'frost', 'mortar'];
+export const TOWER_ORDER = ['spark', 'frost', 'mortar', 'lance'];
 export const UPGRADE_DAMAGE = [1, 1.45, 2.1];
 export const UPGRADE_RANGE = [1, 1.15, 1.32];
 export const UPGRADE_RATE = [1, 1, 1.25];
@@ -62,6 +68,10 @@ export const ENEMY_TYPES = {
   brute: { name: 'Brute', hp: 170, speed: 40, armour: 3, reward: 13, radius: 16, color: '#c98bb0', score: 15 },
   splitter: { name: 'Splitter', hp: 70, speed: 58, reward: 11, radius: 13, color: '#e8d44d', score: 15, splits: 'scuttler' },
   regen: { name: 'Regenerator', hp: 100, speed: 52, regen: 5, reward: 11, radius: 13, color: '#7ddc5a', score: 15 },
+  aegis: {
+    name: 'Aegis', hp: 260, speed: 34, reward: 16, radius: 15, color: '#a8c8e8', score: 20,
+    auraRadius: 95, auraDamageCut: 0.4, // nearby allies (never an Aegis) take 40% less damage
+  },
   boss: { name: 'Ember Colossus', hp: 5200, speed: 26, reward: 350, radius: 30, color: '#ff2d55', score: 500, slowResist: 0.5 },
 };
 export const HP_SCALE_PER_WAVE = 0.27;
@@ -77,16 +87,29 @@ export const WAVES = [
   [['scuttler', 10], ['splitter', 4]],
   [['scuttler', 6], ['brute', 6], ['regen', 4]],
   [['scuttler', 12], ['splitter', 6], ['brute', 4]],
-  [['brute', 8], ['regen', 6], ['splitter', 6]],
-  [['scuttler', 16], ['brute', 8], ['regen', 6]],
-  [['splitter', 10], ['brute', 8], ['regen', 8]],
-  [['scuttler', 20], ['brute', 10], ['splitter', 8]],
-  [['brute', 12], ['regen', 10], ['splitter', 10], ['scuttler', 6]],
+  [['brute', 8], ['regen', 6], ['splitter', 6], ['aegis', 1]],
+  [['scuttler', 16], ['brute', 8], ['regen', 6], ['aegis', 1]],
+  [['splitter', 10], ['brute', 8], ['regen', 8], ['aegis', 2]],
+  [['scuttler', 20], ['brute', 10], ['splitter', 8], ['aegis', 2]],
+  [['brute', 12], ['regen', 10], ['splitter', 10], ['scuttler', 6], ['aegis', 2]],
   [['boss', 1], ['scuttler', 8], ['brute', 4]],
 ];
 export const TOTAL_WAVES = 12;
 export const SPAWN_INTERVAL = 0.9;
 export const WAVE_CLEAR_BONUS = (wave) => 30 + 12 * wave;
+
+// The Ember Surge: on wave 6, a rush of fast scuttlers lands SURGE_DELAY
+// seconds into the wave, announced SURGE_WARN_BEFORE seconds ahead of it.
+export const SURGE_WAVE = 6;
+export const SURGE_DELAY = 11;
+export const SURGE_WARN_BEFORE = 3;
+export const SURGE_COUNT = 8;
+export const SURGE_SPEED_MUL = 1.55;
+
+// Kill streaks: kills chained inside STREAK_WINDOW seconds build a streak;
+// every 5th streak kill is announced, every 10th pays a small gold bonus.
+export const STREAK_WINDOW = 2.5;
+export const STREAK_BONUS_GOLD = 15;
 
 // Economy and scoring.
 export const START_GOLD = 180;

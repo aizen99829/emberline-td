@@ -14,6 +14,7 @@ export function buildTower(type, padIndex, x, y) {
     type, padIndex, x, y,
     level: 1,
     invested: def.cost,
+    targetMode: 'first', // 'first' | 'strong' | 'close' — set from the tower panel
     cooldown: 0,
     angle: -Math.PI / 2,
     muzzle: 0, // muzzle-flash timer, drawn by render.js
@@ -44,16 +45,35 @@ export function upgradeTower(t) {
   return true;
 }
 
-// Targeting: the enemy furthest along the path inside range (and outside min range).
+// Targeting modes, chosen per tower from its panel:
+//   first  — furthest along the path (leaks are stopped first)
+//   strong — most hit points (bosses and Aegis shield-bearers melt first)
+//   close  — nearest the tower (point defence around the pad)
+// Ties always break toward the enemy furthest along the path.
+export const TARGET_MODES = [
+  { id: 'first', label: 'First' },
+  { id: 'strong', label: 'Strong' },
+  { id: 'close', label: 'Close' },
+];
+
 export function pickTarget(tower, enemies) {
   const range = towerRange(tower);
   const minRange = TOWER_TYPES[tower.type].minRange || 0;
+  const mode = tower.targetMode || 'first';
   let best = null;
+  let bestDist = Infinity; // only meaningful in 'close' mode
   for (const e of enemies) {
     if (e.dead || e.reachedCore) continue;
     const d = Math.hypot(e.x - tower.x, e.y - tower.y);
     if (d > range || d < minRange) continue;
-    if (!best || e.distance > best.distance) best = e;
+    if (!best) { best = e; bestDist = d; continue; }
+    if (mode === 'strong') {
+      if (e.hp > best.hp || (e.hp === best.hp && e.distance > best.distance)) best = e;
+    } else if (mode === 'close') {
+      if (d < bestDist || (d === bestDist && e.distance > best.distance)) { best = e; bestDist = d; }
+    } else if (e.distance > best.distance) {
+      best = e;
+    }
   }
   return best;
 }
@@ -61,7 +81,8 @@ export function pickTarget(tower, enemies) {
 // Fire one shot at the target: returns a projectile, or null for instant hits.
 // Frost applies its chill on firing; damage is applied by the projectile on arrival
 // (mortar shells) or at once (spark/frost bolts are fast enough to be hitscan-like).
-export function fireTower(tower, target, now) {
+// The Lance fires a piercing beam: every enemy along the line to full range is hit.
+export function fireTower(tower, target, now, enemies) {
   const def = TOWER_TYPES[tower.type];
   tower.cooldown = 1 / towerRate(tower);
   tower.angle = Math.atan2(target.y - tower.y, target.x - tower.x);
@@ -74,8 +95,11 @@ export function fireTower(tower, target, now) {
       fromTower: tower, target,
     };
   }
+  if (tower.type === 'lance') {
+    return fireLanceBeam(tower, target, now, enemies);
+  }
   // Spark and frost bolts land instantly at this range: apply damage now.
-  const killed = damageEnemy(target, towerDamage(tower), now);
+  const killed = damageEnemy(target, towerDamage(tower), now, enemies);
   if (tower.type === 'frost') {
     applySlow(target, def.slowPct, def.slowDur, now);
     if (tower.level >= 3) {
@@ -84,6 +108,32 @@ export function fireTower(tower, target, now) {
     }
   }
   return { instant: true, target, killed, x: tower.x, y: tower.y };
+}
+
+// The Lance beam: a line from the tower through the target, out to full range.
+// Every enemy whose body crosses the line takes full damage — no falloff.
+function fireLanceBeam(tower, target, now, enemies) {
+  const def = TOWER_TYPES.lance;
+  const range = towerRange(tower);
+  const dx = target.x - tower.x, dy = target.y - tower.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+  const hits = [];
+  for (const e of enemies) {
+    if (e.dead || e.reachedCore) continue;
+    const ex = e.x - tower.x, ey = e.y - tower.y;
+    const along = ex * ux + ey * uy;
+    if (along < 0 || along > range) continue;
+    const across = Math.abs(ex * uy - ey * ux);
+    if (across > def.pierceWidth + e.radius) continue;
+    const killed = damageEnemy(e, towerDamage(tower), now, enemies);
+    hits.push({ target: e, killed });
+  }
+  return {
+    beam: true, hits,
+    x: tower.x, y: tower.y,
+    x2: tower.x + ux * range, y2: tower.y + uy * range,
+  };
 }
 
 // Level-3 frost: chill every enemy near the primary target.
@@ -108,7 +158,7 @@ export function chainHit(tower, target, enemies, now) {
     if (d < bestD && d <= towerRange(tower)) { best = e; bestD = d; }
   }
   if (!best) return null;
-  const killed = damageEnemy(best, towerDamage(tower) * 0.5, now);
+  const killed = damageEnemy(best, towerDamage(tower) * 0.5, now, enemies);
   return { target: best, killed };
 }
 
@@ -121,8 +171,10 @@ export function updateTowers(towers, enemies, projectiles, dt, now, onEvent) {
     if (t.cooldown > 0) continue;
     const target = pickTarget(t, enemies);
     if (!target) continue;
-    const shot = fireTower(t, target, now);
-    if (shot.instant) {
+    const shot = fireTower(t, target, now, enemies);
+    if (shot.beam) {
+      onEvent({ kind: 'beam', tower: t, hits: shot.hits, x2: shot.x2, y2: shot.y2 });
+    } else if (shot.instant) {
       onEvent({ kind: 'shot', tower: t, target, killed: shot.killed });
       chillSplash(t, target, enemies, now);
       const chained = chainHit(t, target, enemies, now);
@@ -147,7 +199,7 @@ export function updateProjectiles(projectiles, enemies, dt, now, onEvent) {
       for (const e of enemies) {
         if (e.dead || e.reachedCore) continue;
         if (Math.hypot(e.x - p.tx, e.y - p.ty) <= p.splash) {
-          if (damageEnemy(e, p.damage, now)) kills += 1;
+          if (damageEnemy(e, p.damage, now, enemies)) kills += 1;
         }
       }
       onEvent({ kind: 'explosion', x: p.tx, y: p.ty, radius: p.splash, kills });
