@@ -6,12 +6,16 @@
 
 **EMBERLINE: Hold the Last Light** — an original tower-defense game in pure Canvas 2D
 with no library and no asset files. Ember-creatures march a winding path through a dark
-valley toward the Core, a glowing crystal. Build Spark, Frost and Mortar towers on the
-stone pads, earn gold from kills and wave-clear bonuses, and survive all 12 waves —
-including the Ember Colossus boss on wave 12. Three tower types with genuinely different
-roles, two upgrade levels each, four enemy types (fast scuttlers, armoured brutes,
-splitters that break in two, regenerators), synthesized WebAudio sound effects, and a
-fixed-timestep simulation under a 60 fps render loop.
+valley toward the Core, a glowing crystal. Build Spark, Frost, Mortar and Lance towers
+on the stone pads, earn gold from kills and wave-clear bonuses, and survive all 12
+waves — including the Ember Colossus boss on wave 12. Four tower types with genuinely
+different roles (the Lance fires a slow piercing beam down the line), two upgrade
+levels each, and per-tower targeting — every tower can be set to fire at the First,
+Strongest or Closest enemy, and sold back for 70% of its cost. Five enemy types (fast
+scuttlers, armoured brutes, splitters that break in two, regenerators, and the Aegis,
+whose shield aura blunts damage to nearby allies), a telegraphed Ember Surge rush on
+wave 6, kill-streak announcements with gold bonuses, synthesized WebAudio sound
+effects, and a fixed-timestep simulation under a 60 fps render loop.
 
 ## Run it
 
@@ -19,9 +23,11 @@ fixed-timestep simulation under a 60 fps render loop.
 node serve.ts
 ```
 
-Then open http://localhost:8080 in desktop Chrome. Click a stone pad to build, click a
-tower to upgrade or sell. **P** pauses, **Space** toggles 1x/2x speed, **M** mutes,
-**R** restarts. Survive wave 12 to win; the Core falling to 0 HP ends the run.
+Then open http://localhost:8080 in desktop Chrome. Click a stone pad to build (hover a
+card to preview its range), click a tower to upgrade, sell it for 70%, or set its
+targeting — First, Strong or Close, also on keys **1**/**2**/**3**. **P** pauses,
+**Space** toggles 1x/2x speed, **M** mutes, **R** restarts. Survive wave 12 to win;
+the Core falling to 0 HP ends the run.
 
 ## Files
 

@@ -445,7 +445,7 @@ function drawHud(ctx, state, L) {
     ctx.fillStyle = '#ff9a3d';
     ctx.font = 'bold 16px sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(`🔥 streak x${state.streak}`, 700, 24);
+    ctx.fillText(`🔥 streak x${state.streak}`, 806, 24);
   }
   if (state.streakBanner && state.streakBanner.t > 0) {
     ctx.save();
