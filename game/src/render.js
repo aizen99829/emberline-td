@@ -1,6 +1,6 @@
 // EMBERLINE render: every pixel the player sees, drawn on one Canvas 2D context.
 // Pure drawing from state — no game logic here.
-import { CANVAS_W, CANVAS_H, PATH, CORE, PADS, PAD_RADIUS, PALETTE, TOWER_TYPES, TOWER_ORDER, TOTAL_WAVES } from './config.js';
+import { CANVAS_W, CANVAS_H, PATH, CORE, PADS, PAD_RADIUS, PALETTE, TOWER_TYPES, TOWER_ORDER, TOTAL_WAVES, TILE } from './config.js';
 import { towerDamage, towerRange, towerRate, upgradeCost } from './towers.js';
 import { layout, formatGold } from './ui.js';
 
@@ -254,7 +254,7 @@ function drawEnemyShape(ctx, e, time) {
     ctx.fillRect(e.x - w / 2, e.y - e.radius - 9, w * Math.max(0, e.hp / e.maxHp), 4);
   }
   // Slow tint.
-  if (e.slowUntil > state.time) {
+  if (e.slowUntil > time) {
     ctx.save();
     ctx.globalAlpha = 0.5;
     ctx.strokeStyle = '#4fe0d0'; ctx.lineWidth = 2;

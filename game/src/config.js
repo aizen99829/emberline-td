@@ -62,9 +62,9 @@ export const ENEMY_TYPES = {
   brute: { name: 'Brute', hp: 170, speed: 40, armour: 3, reward: 13, radius: 16, color: '#c98bb0', score: 15 },
   splitter: { name: 'Splitter', hp: 70, speed: 58, reward: 11, radius: 13, color: '#e8d44d', score: 15, splits: 'scuttler' },
   regen: { name: 'Regenerator', hp: 100, speed: 52, regen: 5, reward: 11, radius: 13, color: '#7ddc5a', score: 15 },
-  boss: { name: 'Ember Colossus', hp: 4200, speed: 26, reward: 350, radius: 30, color: '#ff2d55', score: 500, slowResist: 0.5 },
+  boss: { name: 'Ember Colossus', hp: 5200, speed: 26, reward: 350, radius: 30, color: '#ff2d55', score: 500, slowResist: 0.5 },
 };
-export const HP_SCALE_PER_WAVE = 0.22;
+export const HP_SCALE_PER_WAVE = 0.27;
 export const SPEED_SCALE_PER_WAVE = 0.02;
 export const SPEED_SCALE_CAP = 1.15;
 export const REWARD_SCALE_PER_WAVE = 0.06;
@@ -89,7 +89,7 @@ export const SPAWN_INTERVAL = 0.9;
 export const WAVE_CLEAR_BONUS = (wave) => 30 + 12 * wave;
 
 // Economy and scoring.
-export const START_GOLD = 220;
+export const START_GOLD = 180;
 export const START_LIVES = 20;
 export const KILL_SCORE = 10;
 export const WAVE_CLEAR_SCORE = 100;

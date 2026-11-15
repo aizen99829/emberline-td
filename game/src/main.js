@@ -228,8 +228,9 @@ function doClick(x, y) {
       sfx.click();
       break;
     case 'restart':
+      // Restart returns to a clean title screen; Start begins the fresh run.
       resetRun();
-      state.mode = 'playing';
+      state.mode = 'title';
       sfx.click();
       break;
     case 'startWave':
@@ -309,11 +310,11 @@ attachInput(canvas, {
   },
   toggleSpeed: () => { state.speed = state.speed === 1 ? 2 : 1; },
   toggleMute: () => { state.muted = !state.muted; setMuted(state.muted); },
-  restart: () => { resetRun(); state.mode = 'playing'; },
+  restart: () => { resetRun(); state.mode = 'title'; },
   closeMenus: () => { state.selectedPad = -1; state.selectedTower = null; },
   confirm: () => {
     if (state.mode === 'title') { resetRun(); state.mode = 'playing'; }
-    else if (state.mode === 'victory' || state.mode === 'defeat') { resetRun(); state.mode = 'playing'; }
+    else if (state.mode === 'victory' || state.mode === 'defeat') { resetRun(); state.mode = 'title'; }
   },
 });
 
@@ -323,7 +324,7 @@ window.__emberline = {
   get state() { return state; },
   get ready() { return !!window.__emberlineReady; },
   start() { resetRun(); state.mode = 'playing'; },
-  restart() { resetRun(); state.mode = 'playing'; },
+  restart() { resetRun(); state.mode = 'title'; },
   startWave() { startWave(); },
   placeTower(padIndex, type) {
     const pad = PADS[padIndex];
@@ -347,6 +348,7 @@ window.__emberline = {
     startWave();
   },
   winNow() {
+    state.wave = TOTAL_WAVES;
     state.eco.wavesCleared = TOTAL_WAVES;
     state.endBonus = victoryBonus(state.eco);
     state.mode = 'victory';
@@ -361,36 +363,55 @@ window.__emberline = {
     for (let i = 0; i < n; i++) update(STEP);
     drawGame(ctx, state);
   },
-  // Autoplay: a simple but sensible strategy — fill pads with a mortar/spark/frost
-  // mix, upgrade when affordable, start each wave as soon as the last one clears.
+  // Autoplay: a sensible full strategy — fill pads with a mortar/spark/frost mix,
+  // upgrade when affordable, start each wave as soon as the last one clears.
   // Returns the final mode after the run (victory/defeat/playing).
-  autoPlay(maxSeconds = 900) {
+  autoPlay(maxSeconds = 1200) {
     resetRun();
     state.mode = 'playing';
-    const pattern = ['mortar', 'spark', 'frost', 'spark', 'mortar', 'spark', 'frost', 'spark', 'mortar', 'frost', 'spark', 'spark'];
-    for (let i = 0; i < PADS.length; i++) {
-      if (state.towers.length >= 3 && state.eco.gold < 150) break;
-      const type = pattern[i % pattern.length];
-      if (state.eco.gold >= towerCost(type)) this.placeTower(i, type);
-    }
+    const pattern = ['spark', 'frost', 'spark', 'mortar', 'spark', 'frost', 'spark', 'mortar', 'frost', 'spark', 'mortar', 'spark'];
+    const buyPhase = () => {
+      // Fill empty pads first (keep a small reserve), then upgrade.
+      for (let i = 0; i < PADS.length; i++) {
+        if (state.towers.some((t) => t.padIndex === i)) continue;
+        const type = pattern[i % pattern.length];
+        if (state.eco.gold >= towerCost(type) + 40) this.placeTower(i, type);
+      }
+      let upgraded = true;
+      while (upgraded) {
+        upgraded = false;
+        for (const t of state.towers) {
+          const cost = upgradeCost(t);
+          if (cost !== null && state.eco.gold >= cost + 60) {
+            spend(state.eco, cost);
+            upgradeTower(t);
+            upgraded = true;
+          }
+        }
+      }
+    };
+    buyPhase();
     let elapsed = 0;
     while (elapsed < maxSeconds && state.mode === 'playing') {
       if (state.phase === 'build') {
-        // Upgrade cheapest towers first, then start the wave.
-        let upgraded = true;
-        while (upgraded) {
-          upgraded = false;
-          for (const t of state.towers) {
-            const cost = upgradeCost(t);
-            if (cost !== null && state.eco.gold >= cost + 60) {
-              spend(state.eco, cost);
-              upgradeTower(t);
-              upgraded = true;
-            }
-          }
-        }
+        buyPhase();
         startWave();
       }
+      this.step(1);
+      elapsed += 1;
+    }
+    return state.mode;
+  },
+  // Minimal play: two towers, never upgraded, waves started on time.
+  // A balanced game should defeat this — two towers must not carry wave 12.
+  minimalPlay(maxSeconds = 1200) {
+    resetRun();
+    state.mode = 'playing';
+    this.placeTower(0, 'spark');
+    this.placeTower(1, 'frost');
+    let elapsed = 0;
+    while (elapsed < maxSeconds && state.mode === 'playing') {
+      if (state.phase === 'build') startWave();
       this.step(1);
       elapsed += 1;
     }
