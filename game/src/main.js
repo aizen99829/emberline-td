@@ -1,14 +1,15 @@
 // EMBERLINE main: the game state machine, the fixed-timestep loop, every action,
 // and the debug hooks the headless play-tests drive.
 import {
-  CANVAS_W, CANVAS_H, PADS, TOTAL_WAVES, TOWER_TYPES, START_GOLD,
+  CANVAS_W, CANVAS_H, PADS, TOTAL_WAVES, TOWER_TYPES, START_GOLD, STREAK_WINDOW,
 } from './config.js';
-import { createEconomy, spend, rewardKill, rewardWaveClear, leakEnemy, sellRefund, victoryBonus, canAfford } from './economy.js';
+import { createEconomy, spend, rewardKill, rewardWaveClear, leakEnemy, sellRefund, victoryBonus, canAfford, applyStreakBonus } from './economy.js';
 import { spawnEnemy, updateEnemies, splitEnemy, pointAt } from './enemies.js';
 import { buildTower, updateTowers, updateProjectiles, upgradeTower, upgradeCost, towerCost } from './towers.js';
 import { createSpawner, updateSpawner, waveIsOver, waveRemaining } from './waves.js';
 import { drawGame } from './render.js';
 import { attachInput, resolveClick } from './input.js';
+import { layout, buildMenuCardAt } from './ui.js';
 import { sfx, setMuted, ensureAudio } from './audio.js';
 
 const STEP = 1 / 60;
@@ -42,6 +43,9 @@ function freshState() {
     waveRemaining: 0,
     emberTimer: 0,
     coinTimer: 0,
+    streak: 0, // kills chained inside STREAK_WINDOW seconds
+    streakTimer: 0,
+    streakBanner: null,
   };
 }
 
@@ -73,12 +77,17 @@ function burst(x, y, color, count, speed, size = 3) {
   }
 }
 
+// Ambient embers rise through the valley in two layers: small far sparks that
+// drift behind everything, and rarer big near sparks render.js draws in front.
 function spawnAmbientEmber() {
+  const near = Math.random() < 0.3;
   state.particles.push({
     x: Math.random() * CANVAS_W, y: CANVAS_H + 6,
-    vx: (Math.random() - 0.5) * 12, vy: -(14 + Math.random() * 22),
-    life: 5 + Math.random() * 3, maxLife: 8, size: 1.5 + Math.random() * 2,
+    vx: (Math.random() - 0.5) * 12, vy: -(14 + Math.random() * 22) * (near ? 1.5 : 1),
+    life: 5 + Math.random() * 3, maxLife: 8,
+    size: near ? 2.6 + Math.random() * 1.6 : 1.5 + Math.random() * 2,
     color: Math.random() < 0.7 ? '#ff9a3d' : '#ffd76a', gravity: -4,
+    ambient: true, layer: near ? 2 : 1,
   });
 }
 
@@ -106,6 +115,17 @@ function endWave() {
   }
 }
 
+// One kill in the streak chain: milestones are announced, every 10th pays.
+function noteStreakKill() {
+  state.streak += 1;
+  state.streakTimer = STREAK_WINDOW;
+  if (state.streak % 5 !== 0) return;
+  state.streakBanner = { text: `${state.streak} STREAK!`, t: 1.5 };
+  sfx.streak(state.streak);
+  const bonus = applyStreakBonus(state.eco, state.streak);
+  if (bonus > 0) addFloater(CANVAS_W / 2, 128, `Streak bonus +${bonus} gold`, '#ffcf4d', 16);
+}
+
 // Deaths are counted once, here, after every damage source has run.
 function processDeaths() {
   const newborn = [];
@@ -116,6 +136,7 @@ function processDeaths() {
     addFloater(e.x, e.y - 14, `+${gold}`, '#ffcf4d', 13);
     burst(e.x, e.y, e.color, e.type === 'boss' ? 40 : 8, 90, 3);
     if (state.time - state.coinTimer > 0.09) { sfx.coin(); state.coinTimer = state.time; }
+    noteStreakKill();
     if (e.splits) newborn.push(...splitEnemy(e, state.wave));
   }
   if (newborn.length > 0) state.enemies.push(...newborn);
@@ -130,6 +151,13 @@ function onTowerEvent(ev) {
     });
     if (ev.tower.type === 'frost') sfx.frost(); else sfx.shoot();
     if (ev.killed) sfx.hit();
+  } else if (ev.kind === 'beam') {
+    state.tracers.push({
+      x1: ev.tower.x, y1: ev.tower.y, x2: ev.x2, y2: ev.y2,
+      color: '#e3c8ff', width: 3, life: 0.18, maxLife: 0.18,
+    });
+    sfx.lance();
+    if (ev.hits.some((h) => h.killed)) sfx.hit();
   } else if (ev.kind === 'chain') {
     state.tracers.push({
       x1: ev.target.x, y1: ev.target.y, x2: ev.target.x, y2: ev.target.y,
@@ -145,16 +173,27 @@ function onTowerEvent(ev) {
   }
 }
 
+// The Ember Surge telegraph: banner + alarm, SURGE_WARN_BEFORE ahead of the rush.
+function onSurgeWarn() {
+  state.waveBanner = { text: '⚠ EMBER SURGE INCOMING ⚠', t: 2.6 };
+  sfx.surgeWarn();
+}
+
 function update(dt) {
   state.time += dt;
   if (state.shake > 0) state.shake = Math.max(0, state.shake - dt * 22);
   if (state.waveBanner && state.waveBanner.t > 0) state.waveBanner.t -= dt;
+  if (state.streakBanner && state.streakBanner.t > 0) state.streakBanner.t -= dt;
+  if (state.streakTimer > 0) {
+    state.streakTimer -= dt;
+    if (state.streakTimer <= 0) state.streak = 0;
+  }
 
   // Ambient embers drift in every mode.
   state.emberTimer -= dt;
   if (state.emberTimer <= 0) {
     spawnAmbientEmber();
-    state.emberTimer = 0.5 + Math.random() * 0.7;
+    state.emberTimer = 0.35 + Math.random() * 0.5;
   }
   for (let i = state.particles.length - 1; i >= 0; i--) {
     const p = state.particles[i];
@@ -176,7 +215,11 @@ function update(dt) {
   if (state.mode !== 'playing') return;
 
   if (state.phase === 'combat' && state.spawner) {
-    const born = updateSpawner(state.spawner, dt);
+    const born = updateSpawner(state.spawner, dt, onSurgeWarn);
+    if (born.some((e) => e.surge)) {
+      state.waveBanner = { text: 'EMBER SURGE!', t: 1.4 };
+      state.shake = Math.max(state.shake, 4);
+    }
     state.enemies.push(...born);
   }
   const leaked = updateEnemies(state.enemies, dt, state.time);
@@ -283,6 +326,13 @@ function doClick(x, y) {
       }
       break;
     }
+    case 'setTarget': {
+      if (state.selectedTower) {
+        state.selectedTower.targetMode = r.mode;
+        sfx.click();
+      }
+      break;
+    }
     case 'closeMenus':
     case 'deselect':
       state.selectedPad = -1;
@@ -299,6 +349,11 @@ function doHover(x, y) {
     if (Math.hypot(PADS[i].x - x, PADS[i].y - y) <= 26) { pad = i; break; }
   }
   state.hoverPad = pad;
+  // While the build menu is open, the range ring previews the hovered card's tower.
+  if (state.selectedPad >= 0) {
+    const cardType = buildMenuCardAt(layout(state), x, y);
+    if (cardType) state.ghostType = cardType;
+  }
 }
 
 attachInput(canvas, {
@@ -310,6 +365,9 @@ attachInput(canvas, {
   },
   toggleSpeed: () => { state.speed = state.speed === 1 ? 2 : 1; },
   toggleMute: () => { state.muted = !state.muted; setMuted(state.muted); },
+  setTargetMode: (mode) => {
+    if (state.selectedTower) { state.selectedTower.targetMode = mode; sfx.click(); }
+  },
   restart: () => { resetRun(); state.mode = 'title'; },
   closeMenus: () => { state.selectedPad = -1; state.selectedTower = null; },
   confirm: () => {
@@ -340,6 +398,27 @@ window.__emberline = {
     if (cost === null || !spend(state.eco, cost)) return false;
     return upgradeTower(t);
   },
+  sellTowerAt(padIndex) {
+    const t = state.towers.find((x) => x.padIndex === padIndex);
+    if (!t) return false;
+    state.eco.gold += sellRefund(t.invested);
+    state.towers = state.towers.filter((x) => x !== t);
+    if (state.selectedTower === t) state.selectedTower = null;
+    return true;
+  },
+  selectTowerAt(padIndex) {
+    const t = state.towers.find((x) => x.padIndex === padIndex);
+    if (!t) return false;
+    state.selectedTower = t;
+    state.selectedPad = -1;
+    return true;
+  },
+  setTargetModeAt(padIndex, mode) {
+    const t = state.towers.find((x) => x.padIndex === padIndex);
+    if (!t) return false;
+    t.targetMode = mode;
+    return true;
+  },
   setGold(n) { state.eco.gold = n; },
   setLives(n) { state.eco.lives = n; },
   skipToWave(n) {
@@ -369,7 +448,7 @@ window.__emberline = {
   autoPlay(maxSeconds = 1200) {
     resetRun();
     state.mode = 'playing';
-    const pattern = ['spark', 'frost', 'spark', 'mortar', 'spark', 'frost', 'spark', 'mortar', 'frost', 'spark', 'mortar', 'spark'];
+    const pattern = ['spark', 'frost', 'spark', 'lance', 'spark', 'frost', 'spark', 'mortar', 'frost', 'lance', 'mortar', 'spark'];
     const buyPhase = () => {
       // Fill empty pads first (keep a small reserve), then upgrade.
       for (let i = 0; i < PADS.length; i++) {

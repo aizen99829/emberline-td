@@ -1,7 +1,7 @@
 // EMBERLINE ui: where every button and menu sits, and the numbers the HUD shows.
 // render.js draws from this layout and input.js hit-tests against it — one source.
 import { CANVAS_W, CANVAS_H, PADS, TOWER_ORDER, TOWER_TYPES, TOTAL_WAVES } from './config.js';
-import { upgradeCost } from './towers.js';
+import { upgradeCost, TARGET_MODES } from './towers.js';
 import { sellRefund } from './economy.js';
 
 export function formatGold(n) {
@@ -39,7 +39,7 @@ export function layout(state) {
 
   if (state.selectedPad >= 0 && state.mode === 'playing') {
     const pad = PADS[state.selectedPad];
-    const w = 360, h = 250;
+    const w = 360, h = 44 + TOWER_ORDER.length * 66 + 30; // header + one card per tower + footer
     let x = Math.max(12, Math.min(CANVAS_W - w - 12, pad.x - w / 2));
     let y = Math.max(56, Math.min(CANVAS_H - h - 12, pad.y - h - 30));
     L.buildMenu = {
@@ -53,23 +53,31 @@ export function layout(state) {
 
   if (state.selectedTower && state.mode === 'playing') {
     const t = state.selectedTower;
-    const w = 340, h = 150;
+    const w = 340, h = 198;
     let x = Math.max(12, Math.min(CANVAS_W - w - 12, t.x - w / 2));
     let y = Math.max(56, Math.min(CANVAS_H - h - 12, t.y - h - 30));
     const up = upgradeCost(t);
     L.towerMenu = {
       x, y, w, h, tower: t,
       buttons: [
+        // Targeting row: one button per mode, the active one highlighted.
+        ...TARGET_MODES.map((m, i) => ({
+          id: `target-${m.id}`, kind: 'target', mode: m.id,
+          label: m.label,
+          x: x + 12 + i * 108, y: y + 74, w: 100, h: 30,
+          active: (t.targetMode || 'first') === m.id,
+          disabled: false,
+        })),
         {
           id: 'upgrade', kind: 'upgrade',
           label: up === null ? 'MAX LEVEL' : `Upgrade — ◆ ${up}`,
-          x: x + 12, y: y + 78, w: 200, h: 34,
+          x: x + 12, y: y + 122, w: 200, h: 34,
           disabled: up === null || state.eco.gold < up,
         },
         {
           id: 'sell', kind: 'sell',
           label: `Sell — ◆ ${sellRefund(t.invested)}`,
-          x: x + 224, y: y + 78, w: 104, h: 34,
+          x: x + 224, y: y + 122, w: 104, h: 34,
           disabled: false,
         },
         {

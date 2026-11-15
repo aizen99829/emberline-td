@@ -1,6 +1,6 @@
 // EMBERLINE render: every pixel the player sees, drawn on one Canvas 2D context.
 // Pure drawing from state — no game logic here.
-import { CANVAS_W, CANVAS_H, PATH, CORE, PADS, PAD_RADIUS, PALETTE, TOWER_TYPES, TOWER_ORDER, TOTAL_WAVES, TILE } from './config.js';
+import { CANVAS_W, CANVAS_H, PATH, CORE, PADS, PAD_RADIUS, PALETTE, TOWER_TYPES, TOWER_ORDER, ENEMY_TYPES, TOTAL_WAVES, TILE } from './config.js';
 import { towerDamage, towerRange, towerRate, upgradeCost } from './towers.js';
 import { layout, formatGold } from './ui.js';
 
@@ -35,17 +35,23 @@ function drawSky(ctx, time) {
   g.addColorStop(1, PALETTE.skyBottom);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-  // Aurora ribbons: slow sine bands in teal and violet.
+  // Aurora ribbons in two parallax depths: a far layer crawling high in the
+  // sky and a near layer drifting lower and faster — the sky feels deep.
   ctx.save();
-  ctx.globalAlpha = 0.16;
-  for (const [hue, phase, amp] of [['#3fe0c0', 0, 26], ['#8a5cff', 2.1, 34], ['#3fe0c0', 4.2, 20]]) {
-    ctx.fillStyle = hue;
-    ctx.beginPath();
-    ctx.moveTo(0, 60);
-    for (let x = 0; x <= CANVAS_W; x += 32) {
-      ctx.lineTo(x, 60 + Math.sin(x / 260 + phase + time * 0.12) * amp + Math.sin(x / 90 + time * 0.2) * 8);
+  for (const layer of [
+    { drift: 0.05, base: 34, alpha: 0.1, bands: [['#8a5cff', 1.3, 18], ['#3fe0c0', 3.9, 14]] },
+    { drift: 0.13, base: 74, alpha: 0.17, bands: [['#3fe0c0', 0, 26], ['#8a5cff', 2.1, 32], ['#3fe0c0', 4.2, 20]] },
+  ]) {
+    ctx.globalAlpha = layer.alpha;
+    for (const [hue, phase, amp] of layer.bands) {
+      ctx.fillStyle = hue;
+      ctx.beginPath();
+      ctx.moveTo(0, layer.base);
+      for (let x = 0; x <= CANVAS_W; x += 32) {
+        ctx.lineTo(x, layer.base + Math.sin(x / 260 + phase + time * layer.drift) * amp + Math.sin(x / 90 + time * layer.drift * 1.7) * 8);
+      }
+      ctx.lineTo(CANVAS_W, 0); ctx.lineTo(0, 0); ctx.closePath(); ctx.fill();
     }
-    ctx.lineTo(CANVAS_W, 0); ctx.lineTo(0, 0); ctx.closePath(); ctx.fill();
   }
   ctx.restore();
   // Stars.
@@ -55,14 +61,20 @@ function drawSky(ctx, time) {
     ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
   }
   ctx.globalAlpha = 1;
-  // Distant mountains.
-  ctx.fillStyle = '#100d20';
-  for (const m of MOUNTAINS) {
-    ctx.beginPath();
-    ctx.moveTo(m.x - 40, m.y + m.h);
-    ctx.lineTo(m.x + m.w / 2, m.y);
-    ctx.lineTo(m.x + m.w + 40, m.y + m.h);
-    ctx.closePath(); ctx.fill();
+  // Mountain ridges, far and near, swaying a breath apart (parallax).
+  const ridges = [
+    { color: '#0c0918', sway: Math.sin(time * 0.02) * 5, lift: 26 },
+    { color: '#100d20', sway: Math.sin(time * 0.045) * 11, lift: 0 },
+  ];
+  for (const ridge of ridges) {
+    ctx.fillStyle = ridge.color;
+    for (const m of MOUNTAINS) {
+      ctx.beginPath();
+      ctx.moveTo(m.x - 40 + ridge.sway, m.y + m.h);
+      ctx.lineTo(m.x + m.w / 2 + ridge.sway, m.y + ridge.lift);
+      ctx.lineTo(m.x + m.w + 40 + ridge.sway, m.y + m.h);
+      ctx.closePath(); ctx.fill();
+    }
   }
   // Ground.
   ctx.fillStyle = PALETTE.ground;
@@ -169,6 +181,13 @@ function drawTowerShape(ctx, t, time, selectedTower = null) {
   } else if (t.type === 'frost') {
     ctx.beginPath();
     ctx.moveTo(0, -7); ctx.lineTo(18, 0); ctx.lineTo(0, 7); ctx.closePath(); ctx.fill();
+  } else if (t.type === 'lance') {
+    // Long slim barrel with a bright crystal tip — reads as a beam lance.
+    ctx.fillRect(0, -2.5, 30, 5);
+    ctx.beginPath();
+    ctx.moveTo(30, -5); ctx.lineTo(38, 0); ctx.lineTo(30, 5); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(33, 0, 2.5, 0, Math.PI * 2); ctx.fill();
   } else {
     ctx.fillRect(-2, -6, 20, 12);
     ctx.beginPath(); ctx.arc(18, 0, 6, 0, Math.PI * 2); ctx.fill();
@@ -202,6 +221,19 @@ function drawTowerShape(ctx, t, time, selectedTower = null) {
 }
 
 function drawEnemyShape(ctx, e, time) {
+  // An Aegis projects its shield aura: a pale dashed ring, so the protected
+  // pack is obvious and the priority target reads at a glance.
+  if (e.type === 'aegis') {
+    ctx.save();
+    ctx.globalAlpha = 0.05 + 0.015 * Math.sin(time * 2);
+    ctx.fillStyle = e.color;
+    ctx.beginPath(); ctx.arc(e.x, e.y, ENEMY_TYPES.aegis.auraRadius, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 0.22;
+    ctx.strokeStyle = e.color; ctx.lineWidth = 1.5;
+    ctx.setLineDash([8, 7]);
+    ctx.beginPath(); ctx.arc(e.x, e.y, ENEMY_TYPES.aegis.auraRadius, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
   ctx.save();
   ctx.translate(e.x, e.y);
   if (e.flash > 0) ctx.globalAlpha = 0.7;
@@ -232,6 +264,18 @@ function drawEnemyShape(ctx, e, time) {
     ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = '#d8ffd0'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.55, 0, Math.PI * 2); ctx.stroke();
+  } else if (e.type === 'aegis') {
+    // Hexagonal shield-bearer with a bright rim and a dark core.
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (Math.PI / 3) * i + Math.PI / 6;
+      const px = Math.cos(a) * e.radius, py = Math.sin(a) * e.radius;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#eaf6ff'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#33506e';
+    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.45, 0, Math.PI * 2); ctx.fill();
   } else if (e.type === 'boss') {
     ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#7a0020';
@@ -261,13 +305,37 @@ function drawEnemyShape(ctx, e, time) {
     ctx.beginPath(); ctx.arc(e.x, e.y, e.radius + 3, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
   }
+  // Shielded by an Aegis aura: a pale ring, distinct from the teal slow tint.
+  if (e.shielded) {
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = '#a8c8e8'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.radius + 6, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function drawParticles(ctx, state) {
   for (const p of state.particles) {
+    if (p.ambient && p.layer === 2) continue; // near embers draw in front, below
     ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
     ctx.fillStyle = p.color;
     ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Near-layer ambient embers, drawn over the world for depth.
+function drawForegroundEmbers(ctx, state) {
+  for (const p of state.particles) {
+    if (!p.ambient || p.layer !== 2) continue;
+    const a = Math.max(0, p.life / p.maxLife);
+    ctx.globalAlpha = a * 0.35;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.size * 2.1, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#ffe9b0';
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.size * 0.7, 0, Math.PI * 2); ctx.fill();
   }
   ctx.globalAlpha = 1;
 }
@@ -281,11 +349,11 @@ function drawProjectiles(ctx, state) {
     ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
-  // Instant bolt tracers (spark/frost shots this frame).
+  // Instant bolt tracers (spark/frost shots, lance beams this frame).
   for (const tr of state.tracers) {
     ctx.save();
-    ctx.globalAlpha = Math.max(0, tr.life / 0.12);
-    ctx.strokeStyle = tr.color; ctx.lineWidth = 2;
+    ctx.globalAlpha = Math.max(0, tr.life / (tr.maxLife || 0.12));
+    ctx.strokeStyle = tr.color; ctx.lineWidth = tr.width || 2;
     ctx.beginPath(); ctx.moveTo(tr.x1, tr.y1); ctx.lineTo(tr.x2, tr.y2); ctx.stroke();
     ctx.restore();
   }
@@ -372,6 +440,23 @@ function drawHud(ctx, state, L) {
     ctx.fillText(state.waveBanner.text, CANVAS_W / 2, 150);
     ctx.restore();
   }
+  // Kill-streak: a live counter by the score, and a shout when a milestone lands.
+  if (state.streak >= 3 && state.mode === 'playing') {
+    ctx.fillStyle = '#ff9a3d';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`🔥 streak x${state.streak}`, 700, 24);
+  }
+  if (state.streakBanner && state.streakBanner.t > 0) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, state.streakBanner.t);
+    ctx.font = 'bold 30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffb020';
+    ctx.shadowColor = '#ff4400'; ctx.shadowBlur = 16;
+    ctx.fillText(state.streakBanner.text, CANVAS_W / 2, 196);
+    ctx.restore();
+  }
 }
 
 function drawBuildMenu(ctx, state, L) {
@@ -423,9 +508,12 @@ function drawTowerMenu(ctx, state, L) {
   ctx.fillStyle = PALETTE.text;
   ctx.font = '14px sans-serif';
   ctx.fillText(`Damage ${Math.round(towerDamage(t))}   Range ${Math.round(towerRange(t))}   Rate ${towerRate(t).toFixed(2)}/s`, m.x + 14, m.y + 48);
+  ctx.fillStyle = PALETTE.textDim;
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillText('TARGETING  (or keys 1 / 2 / 3)', m.x + 14, m.y + 66);
   for (const b of m.buttons) {
     const disabled = b.disabled;
-    ctx.fillStyle = disabled ? '#1a1428' : b.kind === 'sell' ? '#3d1a24' : '#2a2145';
+    ctx.fillStyle = disabled ? '#1a1428' : b.active ? '#4a3a7d' : b.kind === 'sell' ? '#3d1a24' : '#2a2145';
     roundRect(ctx, b.x, b.y, b.w, b.h, 6);
     ctx.fill();
     ctx.strokeStyle = disabled ? '#4a3f6e' : def.color; ctx.lineWidth = 1.5; ctx.stroke();
@@ -465,7 +553,8 @@ function drawTitle(ctx, state, L) {
   ctx.fillText('▶  START THE DEFENSE', b.x + b.w / 2, b.y + b.h / 2 + 1);
   ctx.font = '14px sans-serif';
   ctx.fillStyle = PALETTE.textDim;
-  ctx.fillText('Spark — fast and cheap · Frost — slows the march · Mortar — huge splash', CANVAS_W / 2, 500);
+  ctx.fillText('Spark — fast and cheap · Frost — slows the march · Mortar — huge splash · Lance — piercing beam', CANVAS_W / 2, 500);
+  ctx.fillText('Set each tower to target First, Strong or Close · Sell any tower back for 70% · Beware the wave-6 Ember Surge', CANVAS_W / 2, 526);
 }
 
 function drawEndScreen(ctx, state, L, victory) {
@@ -522,6 +611,7 @@ function drawTitleBackdropTowers(ctx) {
     { type: 'spark', x: 200, y: 180, angle: 0.6 },
     { type: 'frost', x: 540, y: 345, angle: -0.4 },
     { type: 'mortar', x: 780, y: 515, angle: 2.4 },
+    { type: 'lance', x: 1080, y: 345, angle: 2.8 },
   ];
   for (const d of demo) {
     drawTowerShape(ctx, { ...d, level: 2, muzzle: 0, id: 0, padIndex: 0, cooldown: 0 }, 0);
@@ -546,6 +636,7 @@ export function drawGame(ctx, state) {
   drawProjectiles(ctx, state);
   drawParticles(ctx, state);
   drawFloaters(ctx, state);
+  drawForegroundEmbers(ctx, state);
   drawGhost(ctx, state);
   const L = layout(state);
   if (state.mode !== 'title') drawHud(ctx, state, L);

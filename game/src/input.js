@@ -32,6 +32,10 @@ export function attachInput(canvas, actions) {
     else if (k === 'r') actions.restart();
     else if (k === 'escape') actions.closeMenus();
     else if (k === 'enter') actions.confirm();
+    // 1/2/3 retarget the selected tower: First / Strong / Close.
+    else if (k === '1' && actions.setTargetMode) actions.setTargetMode('first');
+    else if (k === '2' && actions.setTargetMode) actions.setTargetMode('strong');
+    else if (k === '3' && actions.setTargetMode) actions.setTargetMode('close');
   });
 }
 
@@ -39,7 +43,7 @@ export function attachInput(canvas, actions) {
 // Returns one of: {action:'start'} | {action:'restart'} | {action:'startWave'}
 // | {action:'hud', id} | {action:'selectPad', pad} | {action:'selectTower', tower}
 // | {action:'build', type} | {action:'upgrade'} | {action:'sell'} | {action:'closeMenus'}
-// | {action:'deselect'}
+// | {action:'setTarget', mode} | {action:'deselect'}
 export function resolveClick(state, x, y) {
   const L = layout(state);
 
@@ -74,6 +78,7 @@ export function resolveClick(state, x, y) {
     const btn = towerMenuButtonAt(L, x, y);
     if (btn) {
       if (btn.disabled) return { action: 'none' };
+      if (btn.kind === 'target') return { action: 'setTarget', mode: btn.mode };
       if (btn.id === 'upgrade') return { action: 'upgrade' };
       if (btn.id === 'sell') return { action: 'sell' };
       if (btn.id === 'closeMenu') return { action: 'closeMenus' };
