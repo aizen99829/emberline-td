@@ -15,7 +15,10 @@ Strongest or Closest enemy, and sold back for 70% of its cost. Five enemy types 
 scuttlers, armoured brutes, splitters that break in two, regenerators, and the Aegis,
 whose shield aura blunts damage to nearby allies), a telegraphed Ember Surge rush on
 wave 6, kill-streak announcements with gold bonuses, synthesized WebAudio sound
-effects, and a fixed-timestep simulation under a 60 fps render loop.
+effects, and a fixed-timestep simulation under a 60 fps render loop. While you plan,
+a preview panel above the start button shows the next wave's composition in enemy
+colours; while the Colossus lives, a named boss health bar under the HUD tracks
+the fight. Lit braziers mark every bend of the road, and maxed towers wear gold trim.
 
 ## Run it
 
