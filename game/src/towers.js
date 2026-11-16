@@ -90,6 +90,8 @@ export function fireTower(tower, target, now, enemies) {
   if (tower.type === 'mortar') {
     return {
       x: tower.x, y: tower.y, tx: target.x, ty: target.y,
+      x0: tower.x, y0: tower.y, // launch point: render.js arcs the shell from here
+      span: Math.hypot(target.x - tower.x, target.y - tower.y) || 1,
       speed: def.projSpeed, damage: towerDamage(tower),
       splash: def.splash * (tower.level >= 3 ? 1.4 : 1),
       fromTower: tower, target,
@@ -102,10 +104,8 @@ export function fireTower(tower, target, now, enemies) {
   const killed = damageEnemy(target, towerDamage(tower), now, enemies);
   if (tower.type === 'frost') {
     applySlow(target, def.slowPct, def.slowDur, now);
-    if (tower.level >= 3) {
-      // Level-3 frost chills nearby enemies too.
-      // (handled by the caller through chillSplash below)
-    }
+    // Level-3 frost also chills the target's neighbours — the caller runs
+    // chillSplash for that (see updateTowers).
   }
   return { instant: true, target, killed, x: tower.x, y: tower.y };
 }

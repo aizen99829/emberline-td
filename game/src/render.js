@@ -2,6 +2,7 @@
 // Pure drawing from state — no game logic here.
 import { CANVAS_W, CANVAS_H, PATH, CORE, PADS, PAD_RADIUS, PALETTE, TOWER_TYPES, TOWER_ORDER, ENEMY_TYPES, TOTAL_WAVES, TILE, WAVES, SURGE_WAVE, SURGE_COUNT } from './config.js';
 import { towerDamage, towerRange, towerRate, upgradeCost } from './towers.js';
+import { pointAt, TOTAL_PATH_LENGTH } from './enemies.js';
 import { layout, formatGold } from './ui.js';
 
 // Fixed star field so the sky never flickers between frames.
@@ -83,6 +84,22 @@ function drawSky(ctx, time) {
   for (const [cx, cy, cr] of [[-10, -6, 6], [8, 10, 4.5], [12, -14, 3.5], [-16, 12, 3]]) {
     ctx.beginPath(); ctx.arc(moonX + cx, moonY + cy, cr, 0, Math.PI * 2); ctx.fill();
   }
+  // A small ringed planet far off at the top left, so the sky has a second
+  // landmark and the frame's corners balance: moon right, planet left.
+  ctx.save();
+  ctx.globalAlpha = 0.75;
+  const planet = ctx.createRadialGradient(142, 78, 2, 150, 86, 17);
+  planet.addColorStop(0, '#6a549e');
+  planet.addColorStop(1, '#2a1e4e');
+  ctx.fillStyle = planet;
+  ctx.beginPath(); ctx.arc(150, 86, 16, 0, Math.PI * 2); ctx.fill();
+  ctx.translate(150, 86);
+  ctx.rotate(-0.42);
+  ctx.scale(1, 0.34);
+  ctx.strokeStyle = 'rgba(190,170,255,0.4)';
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(0, 0, 27, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
   // Aurora ribbons in two parallax depths: a far layer crawling high in the
   // sky and a near layer drifting lower and faster — the sky feels deep.
   ctx.save();
@@ -128,6 +145,23 @@ function drawSky(ctx, time) {
   // Mountain ridges, far and near, swaying a breath apart (parallax).
   drawRidge(ctx, 336, 700, Math.sin(time * 0.02) * 5, '#0d0a1a', 'rgba(255,150,80,0.10)');
   drawRidge(ctx, 372, 1700, Math.sin(time * 0.045) * 11, '#120e22', 'rgba(255,170,90,0.16)');
+  // Distant watch-fires on the ridges: tiny ember points with soft halos,
+  // other valleys holding their own lines. Fixed by seed, gently breathing.
+  for (let i = 0; i < 9; i++) {
+    const fx = 60 + sceneryRand(i * 7 + 41) * (CANVAS_W - 120);
+    const fy = 238 + sceneryRand(i * 7 + 42) * 84;
+    const flick = 0.6 + 0.4 * Math.sin(time * 2.2 + i * 1.9);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const halo = ctx.createRadialGradient(fx, fy, 0, fx, fy, 13);
+    halo.addColorStop(0, `rgba(255,170,80,${0.20 * flick})`);
+    halo.addColorStop(1, 'rgba(255,150,60,0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(fx, fy, 13, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = `rgba(255,205,120,${0.85 * flick})`;
+    ctx.beginPath(); ctx.arc(fx, fy, 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
   // Ground.
   ctx.fillStyle = PALETTE.ground;
   ctx.fillRect(0, 300, CANVAS_W, CANVAS_H - 300);
@@ -150,17 +184,42 @@ function drawSky(ctx, time) {
   ctx.globalAlpha = 1;
 }
 
+// Shockwave rings from explosions and the boss's fall: an eased expanding
+// stroke that thins and fades. Fed by state.rings (main.js), drawn over the
+// world with the particles.
+function drawRings(ctx, state) {
+  for (const r of state.rings || []) {
+    const t = 1 - Math.max(0, r.life / r.maxLife);
+    const eased = 1 - (1 - t) * (1 - t);
+    ctx.save();
+    ctx.globalAlpha = (1 - t) * 0.55;
+    ctx.strokeStyle = r.color;
+    ctx.lineWidth = 3 * (1 - t) + 0.8;
+    ctx.beginPath(); ctx.arc(r.x, r.y, Math.max(1, r.maxR * eased), 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+}
+
 // A soft vignette that pulls the eye to the valley centre. Drawn over the
-// world, under the HUD and menus.
-function drawVignette(ctx) {
+// world, under the HUD and menus. When the Core is nearly lost it breathes
+// red at the edges — danger you feel before you read the lives count.
+function drawVignette(ctx, state) {
   const v = ctx.createRadialGradient(CANVAS_W / 2, CANVAS_H / 2, CANVAS_H * 0.42, CANVAS_W / 2, CANVAS_H / 2, CANVAS_H * 0.98);
   v.addColorStop(0, 'rgba(4,2,10,0)');
   v.addColorStop(1, 'rgba(4,2,10,0.42)');
   ctx.fillStyle = v;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  if (state && state.mode === 'playing' && state.eco.lives <= 5) {
+    const pulse = 0.07 + 0.045 * Math.sin(state.time * 4.2);
+    const danger = ctx.createRadialGradient(CANVAS_W / 2, CANVAS_H / 2, CANVAS_H * 0.44, CANVAS_W / 2, CANVAS_H / 2, CANVAS_H * 0.95);
+    danger.addColorStop(0, 'rgba(255,30,50,0)');
+    danger.addColorStop(1, `rgba(255,30,50,${pulse})`);
+    ctx.fillStyle = danger;
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  }
 }
 
-function drawPath(ctx) {
+function drawPath(ctx, time) {
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   // Glow edge.
   ctx.strokeStyle = PALETTE.pathEdge;
@@ -204,6 +263,106 @@ function drawPath(ctx) {
     }
   }
   ctx.globalAlpha = 1;
+  // Ember seams: short glowing cracks in the stone, breathing with heat.
+  // Fixed by seed along every segment, like the cobbles above.
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let s = 0; s < PATH.length - 1; s++) {
+    const a = PATH[s], b = PATH[s + 1];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const ux = (b.x - a.x) / (len || 1), uy = (b.y - a.y) / (len || 1);
+    const px = -uy, py = ux;
+    const n = Math.floor(len / 95);
+    for (let i = 0; i < n; i++) {
+      const idx = s * 31 + i * 7;
+      const t = (i + 0.3 + sceneryRand(idx + 51) * 0.4) / Math.max(1, n);
+      const off = (sceneryRand(idx + 52) - 0.5) * (TILE - 16);
+      const x = a.x + (b.x - a.x) * t + px * off;
+      const y = a.y + (b.y - a.y) * t + py * off;
+      const heat = 0.16 + 0.13 * Math.sin(time * 1.8 + idx * 1.7);
+      const seam = 4 + sceneryRand(idx + 53) * 5;
+      ctx.globalAlpha = heat;
+      ctx.strokeStyle = '#ff8a3d';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x - ux * seam, y - uy * seam);
+      ctx.lineTo(x + ux * seam, y + uy * seam);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+  // A slow pulse of light travels the road from the pass to the Core — the
+  // march made visible, and a hint of which way the creatures walk.
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const [offset, alpha] of [[0, 0.13], [0.5, 0.07]]) {
+    const p = pointAt(((time * 75) / TOTAL_PATH_LENGTH + offset) % 1 * TOTAL_PATH_LENGTH);
+    const halo = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 24);
+    halo.addColorStop(0, `rgba(255,180,80,${alpha})`);
+    halo.addColorStop(1, 'rgba(255,150,60,0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 24, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+  drawBraziers(ctx, time);
+}
+
+// Iron braziers in the crook of every path bend (the final descent to the
+// Core stays clear of them): a stone bowl, a breathing flame, and a pool of
+// warm light on the ground. Positions derive from the path's own corners.
+const BRAZIERS = [];
+{
+  for (let i = 1; i < PATH.length - 2; i++) {
+    const c = PATH[i];
+    const ux = PATH[i - 1].x - c.x, uy = PATH[i - 1].y - c.y;
+    const vx = PATH[i + 1].x - c.x, vy = PATH[i + 1].y - c.y;
+    const ul = Math.hypot(ux, uy) || 1, vl = Math.hypot(vx, vy) || 1;
+    let bx = ux / ul + vx / vl, by = uy / ul + vy / vl;
+    const bl = Math.hypot(bx, by) || 1;
+    BRAZIERS.push({ x: c.x + (bx / bl) * 37, y: c.y + (by / bl) * 37, seed: i * 2.39 });
+  }
+}
+function drawBraziers(ctx, time) {
+  for (const b of BRAZIERS) {
+    // Warm light pooled on the ground.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const pool = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, 30);
+    pool.addColorStop(0, 'rgba(255,160,70,0.10)');
+    pool.addColorStop(1, 'rgba(255,140,60,0)');
+    ctx.fillStyle = pool;
+    ctx.beginPath(); ctx.arc(b.x, b.y, 30, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    // The bowl: a dark iron cup on a stub of a stand.
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath(); ctx.ellipse(b.x, b.y + 7, 11, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#0f0b20';
+    ctx.fillRect(b.x - 1.5, b.y + 2, 3, 6);
+    ctx.beginPath(); ctx.ellipse(b.x, b.y + 2, 9, 3.6, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(200,170,120,0.5)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(b.x, b.y + 2, 9, 3.6, 0, Math.PI, Math.PI * 2); ctx.stroke();
+    // The flame: a teardrop that leans and breathes off its own seed.
+    const flick = 1 + 0.16 * Math.sin(time * 11 + b.seed * 7) + 0.08 * Math.sin(time * 23 + b.seed * 3);
+    const fh = 13 * flick, lean = Math.sin(time * 3.1 + b.seed) * 1.6;
+    const flame = ctx.createRadialGradient(b.x, b.y - 2, 0, b.x, b.y - 2, 15);
+    flame.addColorStop(0, 'rgba(255,220,150,0.85)');
+    flame.addColorStop(0.45, 'rgba(255,150,60,0.45)');
+    flame.addColorStop(1, 'rgba(255,120,40,0)');
+    ctx.fillStyle = flame;
+    ctx.beginPath(); ctx.arc(b.x, b.y - 2, 15, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffb35c';
+    ctx.beginPath();
+    ctx.moveTo(b.x - 3.6, b.y + 1);
+    ctx.quadraticCurveTo(b.x - 3.2, b.y - fh * 0.55, b.x + lean, b.y - fh);
+    ctx.quadraticCurveTo(b.x + 3.2, b.y - fh * 0.55, b.x + 3.6, b.y + 1);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff0c0';
+    ctx.beginPath();
+    ctx.moveTo(b.x - 1.7, b.y + 1);
+    ctx.quadraticCurveTo(b.x - 1.4, b.y - fh * 0.34, b.x + lean * 0.6, b.y - fh * 0.58);
+    ctx.quadraticCurveTo(b.x + 1.4, b.y - fh * 0.34, b.x + 1.7, b.y + 1);
+    ctx.closePath(); ctx.fill();
+  }
 }
 
 function drawPads(ctx, state) {
@@ -380,6 +539,11 @@ function drawTowerShape(ctx, t, time, selectedTower = null) {
   ctx.fillStyle = base;
   ctx.beginPath(); ctx.arc(0, 0, 17, 0, Math.PI * 2); ctx.fill();
   ctx.lineWidth = 2; ctx.strokeStyle = def.dark; ctx.stroke();
+  // A maxed tower wears a gold trim ring: elite at a glance.
+  if (t.level >= 3) {
+    ctx.strokeStyle = 'rgba(255,207,77,0.75)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(0, 0, 18.6, 0, Math.PI * 2); ctx.stroke();
+  }
   ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.arc(0, 0, 14.5, Math.PI * 1.05, Math.PI * 1.75); ctx.stroke();
   // The barrel recoils along its aim while the muzzle flash lives.
@@ -393,6 +557,16 @@ function drawTowerShape(ctx, t, time, selectedTower = null) {
     ctx.fillRect(12, -7, 4, 5);
     ctx.fillRect(12, 2, 4, 5);
     ctx.beginPath(); ctx.arc(20, 0, 3.5, 0, Math.PI * 2); ctx.fill();
+    // Idle charge crackles between the prongs now and then (seeded by the
+    // tower and the clock, so it never strobes).
+    if (t.muzzle <= 0 && sceneryRand(Math.floor(time * 7) + t.id * 131) > 0.86) {
+      ctx.strokeStyle = 'rgba(255,246,200,0.8)'; ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(16, -5);
+      ctx.lineTo(18.5, 0);
+      ctx.lineTo(16, 4);
+      ctx.stroke();
+    }
     if (t.muzzle > 0) {
       ctx.strokeStyle = '#fff6c8'; ctx.lineWidth = 1.4;
       ctx.beginPath();
@@ -671,12 +845,22 @@ function drawEnemyShape(ctx, e, time) {
     ctx.fillStyle = e.hp / e.maxHp > 0.5 ? '#7ddc5a' : e.hp / e.maxHp > 0.25 ? '#ffcf4d' : '#ff4d6a';
     ctx.fillRect(e.x - w / 2, e.y - e.radius - 9, w * Math.max(0, e.hp / e.maxHp), 4);
   }
-  // Slow tint.
+  // Slow tint, with frost sparkles orbiting the chilled body.
   if (e.slowUntil > time) {
     ctx.save();
     ctx.globalAlpha = 0.5;
     ctx.strokeStyle = '#4fe0d0'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(e.x, e.y, e.radius + 3, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = '#bffcf2'; ctx.lineWidth = 1.3;
+    for (let k = 0; k < 2; k++) {
+      const a = time * 2.6 + e.id * 1.3 + k * Math.PI;
+      const sx = e.x + Math.cos(a) * (e.radius + 5), sy = e.y + Math.sin(a) * (e.radius + 5);
+      ctx.beginPath();
+      ctx.moveTo(sx - 2.6, sy); ctx.lineTo(sx + 2.6, sy);
+      ctx.moveTo(sx, sy - 2.6); ctx.lineTo(sx, sy + 2.6);
+      ctx.stroke();
+    }
     ctx.restore();
   }
   // Shielded by an Aegis aura: a pale ring, distinct from the teal slow tint.
@@ -737,16 +921,27 @@ function drawProjectiles(ctx, state) {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+    // The shell arcs: it rides high mid-flight and falls on its target.
+    // A ground shadow tracks the true position while the body lifts.
+    let lift = 0;
+    if (p.span) {
+      const left = Math.hypot(p.tx - p.x, p.ty - p.y);
+      const prog = Math.max(0, Math.min(1, 1 - left / p.span));
+      lift = Math.sin(prog * Math.PI) * 30;
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.30)';
+    ctx.beginPath(); ctx.ellipse(p.x, p.y, 5, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+    const sy = p.y - lift;
     // The shell itself: glow, molten body, hot highlight.
-    const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 11);
+    const glow = ctx.createRadialGradient(p.x, sy, 0, p.x, sy, 11);
     glow.addColorStop(0, 'rgba(255,190,80,0.75)');
     glow.addColorStop(1, 'rgba(255,150,50,0)');
     ctx.fillStyle = glow;
-    ctx.beginPath(); ctx.arc(p.x, p.y, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(p.x, sy, 11, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#ffb020';
-    ctx.beginPath(); ctx.arc(p.x, p.y, 4.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(p.x, sy, 4.2, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#fff3cf';
-    ctx.beginPath(); ctx.arc(p.x - 1.2, p.y - 1.2, 1.7, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(p.x - 1.2, sy - 1.2, 1.7, 0, Math.PI * 2); ctx.fill();
   }
   // Instant bolt tracers (spark/frost shots, lance beams this frame): a
   // wide soft under-stroke with a bright core line, so shots read as light.
@@ -915,6 +1110,35 @@ function drawHud(ctx, state, L) {
   }
   ctx.fillStyle = 'rgba(10,8,24,0.8)';
   for (let i = 1; i < TOTAL_WAVES; i++) ctx.fillRect(16 + (420 / TOTAL_WAVES) * i - 0.75, 52, 1.5, 6);
+  // Boss health: while the Colossus lives, a wide named bar under the top
+  // panel — the fight's stakes readable from across the room.
+  const boss = state.enemies.find((e) => e.type === 'boss' && !e.dead && !e.reachedCore);
+  if (boss && state.mode === 'playing') {
+    const bw = 460, bx = CANVAS_W / 2 - bw / 2, by = 54, bh = 13;
+    const frac = Math.max(0, boss.hp / boss.maxHp);
+    ctx.fillStyle = 'rgba(10,6,18,0.78)';
+    roundRect(ctx, bx - 8, by - 4, bw + 16, bh + 22, 8);
+    ctx.fill();
+    ctx.strokeStyle = frac < 0.3 ? `rgba(255,77,106,${0.6 + 0.4 * Math.sin(state.time * 5)})` : 'rgba(255,77,106,0.45)';
+    ctx.lineWidth = 1.2; ctx.stroke();
+    drawDiamondIcon(ctx, bx + 4, by + bh / 2, 8, '#ff2d55');
+    ctx.fillStyle = '#ffb3c0';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('EMBER COLOSSUS', bx + 14, by + bh / 2 + 0.5);
+    const labelW = ctx.measureText('EMBER COLOSSUS').width;
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    roundRect(ctx, bx + 22 + labelW, by, bw - 30 - labelW, bh, 6);
+    ctx.fill();
+    if (frac > 0) {
+      const fill = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+      fill.addColorStop(0, '#ff2d55');
+      fill.addColorStop(1, '#ff7a5c');
+      ctx.fillStyle = fill;
+      roundRect(ctx, bx + 22 + labelW, by, Math.max(8, (bw - 30 - labelW) * frac), bh, 6);
+      ctx.fill();
+    }
+  }
   // Top-right buttons.
   for (const b of L.hudButtons) {
     const bg = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
@@ -950,6 +1174,37 @@ function drawHud(ctx, state, L) {
     ctx.font = 'bold 18px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+    // Next-wave preview above the button: what is coming, in enemy colours —
+    // the planning half of the game, shown before you commit your gold.
+    const next = state.wave + 1;
+    const table = WAVES[next - 1] || [];
+    if (next <= TOTAL_WAVES && table.length > 0) {
+      const pw = b.w, px = b.x, ph = 46, py = b.y - ph - 8;
+      ctx.fillStyle = 'rgba(12,9,26,0.82)';
+      roundRect(ctx, px, py, pw, ph, 8);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(107,90,158,0.8)'; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.textAlign = 'left';
+      ctx.fillStyle = PALETTE.textDim;
+      ctx.font = 'bold 10px sans-serif';
+      ctx.fillText(next === SURGE_WAVE ? 'NEXT WAVE — EMBER SURGE!' : 'NEXT WAVE', px + 10, py + 12);
+      let cx = px + 12;
+      ctx.font = 'bold 12px sans-serif';
+      for (const [type, count] of table) {
+        const def = ENEMY_TYPES[type];
+        ctx.fillStyle = def.color;
+        ctx.beginPath(); ctx.arc(cx + 4, py + 30, 4.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = PALETTE.text;
+        const label = `×${count}`;
+        ctx.fillText(label, cx + 12, py + 31);
+        cx += 20 + ctx.measureText(label).width + 8;
+        if (cx > px + pw - 34) break;
+      }
+      if (next === SURGE_WAVE) {
+        ctx.fillStyle = PALETTE.danger;
+        ctx.fillText(`+${SURGE_COUNT} rush`, cx + 2, py + 31);
+      }
+    }
   }
   // Wave banner on a dark pill, so it reads over bright combat.
   if (state.waveBanner && state.waveBanner.t > 0) {
@@ -1176,6 +1431,66 @@ function drawScuttlerSilhouette(ctx, x, y, s) {
   ctx.restore();
 }
 
+// One marching silhouette for the title: a near-black body, a rim of the
+// creature's own colour, and its eyes lit. The invasion, previewed.
+function drawMarcherSilhouette(ctx, type, x, y, s, alpha) {
+  const def = ENEMY_TYPES[type];
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#0c0716';
+  ctx.strokeStyle = def.color;
+  ctx.lineWidth = 1.4;
+  if (type === 'brute') {
+    roundRect(ctx, -16, -12, 32, 25, 5);
+    ctx.fill(); ctx.stroke();
+  } else if (type === 'aegis') {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (Math.PI / 3) * i + Math.PI / 6;
+      const px = Math.cos(a) * 15, py = Math.sin(a) * 15;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  } else {
+    const r = type === 'splitter' ? 13 : 11;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    if (type === 'scuttler') {
+      ctx.beginPath();
+      for (let side = -1; side <= 1; side += 2) {
+        for (let i = 0; i < 3; i++) {
+          ctx.moveTo(-6 + i * 6, side * 6);
+          ctx.lineTo(-8 + i * 7, side * 15);
+        }
+      }
+      ctx.stroke();
+    }
+  }
+  ctx.fillStyle = def.color;
+  ctx.beginPath(); ctx.arc(-4, -3, 1.9, 0, Math.PI * 2); ctx.arc(4, -3, 1.9, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// Columns of silhouettes marching the path's straights behind the title —
+// three depths of them, so the cover promises the whole war.
+function drawMarchColumns(ctx, time) {
+  const rows = [
+    { y: 100, speed: 17, gap: 185, scale: 1, alpha: 0.95, from: -60, to: 880, dir: 1, types: ['scuttler', 'scuttler', 'brute', 'scuttler', 'splitter', 'aegis'] },
+    { y: 260, speed: 12, gap: 205, scale: 0.85, alpha: 0.7, from: 150, to: 900, dir: -1, types: ['scuttler', 'splitter', 'scuttler', 'brute'] },
+    { y: 430, speed: 10, gap: 240, scale: 0.8, alpha: 0.55, from: -40, to: 1030, dir: 1, types: ['brute', 'scuttler', 'regen', 'scuttler'] },
+  ];
+  for (const row of rows) {
+    const span = row.to - row.from + row.gap;
+    for (let i = 0; i < row.types.length; i++) {
+      const travelled = (time * row.speed + i * row.gap) % span;
+      const x = row.dir > 0 ? row.from + travelled : row.to - travelled;
+      const bob = Math.sin(time * 3 + i * 1.8 + row.y) * 1.6;
+      drawMarcherSilhouette(ctx, row.types[i], x, row.y + bob, row.scale, row.alpha);
+    }
+  }
+}
+
 function drawTitle(ctx, state, L) {
   // A cinematic gradient wash, darkest at the top and bottom of the frame.
   const wash = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
@@ -1184,6 +1499,16 @@ function drawTitle(ctx, state, L) {
   wash.addColorStop(1, 'rgba(6,4,16,0.72)');
   ctx.fillStyle = wash;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  // Low fog bands drifting over the valley floor.
+  for (const [fy, fh, a] of [[448, 92, 0.05], [592, 116, 0.06]]) {
+    const fog = ctx.createLinearGradient(0, fy, 0, fy + fh);
+    fog.addColorStop(0, 'rgba(190,170,255,0)');
+    fog.addColorStop(0.5, `rgba(190,170,255,${a})`);
+    fog.addColorStop(1, 'rgba(190,170,255,0)');
+    ctx.fillStyle = fog;
+    ctx.fillRect(0, fy, CANVAS_W, fh);
+  }
+  drawMarchColumns(ctx, state.time);
   // The Colossus looms at the right edge; two scuttlers trail it.
   drawBossSilhouette(ctx, 1052, 430, 2.05, state.time);
   drawScuttlerSilhouette(ctx, 928, 500, 1.25);
@@ -1247,10 +1572,67 @@ function drawTitle(ctx, state, L) {
   ctx.fillStyle = '#fff3c4';
   ctx.font = 'bold 24px sans-serif';
   ctx.fillText('▶  START THE DEFENSE', b.x + b.w / 2, b.y + b.h / 2 + 1);
+  // The game's depth as four badges, not a paragraph: a glyph and a claim
+  // each, in the accent colour of the thing they name.
+  const chipGlyphs = {
+    towers: (x, y) => drawTowerGlyph(ctx, 'lance', x, y, 19),
+    waves: (x, y) => {
+      ctx.fillStyle = '#ffcf4d';
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.moveTo(x - 7 + i * 7, y - 5);
+        ctx.lineTo(x - 3 + i * 7, y);
+        ctx.lineTo(x - 7 + i * 7, y + 5);
+        ctx.lineTo(x - 5 + i * 7, y);
+        ctx.closePath(); ctx.fill();
+      }
+    },
+    target: (x, y) => {
+      ctx.strokeStyle = '#4fe0d0'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(x, y, 6.5, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x - 9.5, y); ctx.lineTo(x - 4, y);
+      ctx.moveTo(x + 4, y); ctx.lineTo(x + 9.5, y);
+      ctx.moveTo(x, y - 9.5); ctx.lineTo(x, y - 4);
+      ctx.moveTo(x, y + 4); ctx.lineTo(x, y + 9.5);
+      ctx.stroke();
+      ctx.fillStyle = '#4fe0d0';
+      ctx.beginPath(); ctx.arc(x, y, 1.8, 0, Math.PI * 2); ctx.fill();
+    },
+    surge: (x, y) => {
+      ctx.fillStyle = '#ff4d6a';
+      ctx.beginPath();
+      ctx.moveTo(x + 2.5, y - 8); ctx.lineTo(x - 4.5, y + 1); ctx.lineTo(x - 0.5, y + 1); ctx.lineTo(x - 2.5, y + 8); ctx.lineTo(x + 4.5, y - 1); ctx.lineTo(x + 0.5, y - 1);
+      ctx.closePath(); ctx.fill();
+    },
+  };
+  const chips = [
+    { glyph: 'towers', label: '4 TOWER TYPES', color: '#c792ff' },
+    { glyph: 'waves', label: '12 WAVES + BOSS', color: '#ffcf4d' },
+    { glyph: 'target', label: '3 TARGET MODES', color: '#4fe0d0' },
+    { glyph: 'surge', label: 'EMBER SURGE', color: '#ff4d6a' },
+  ];
+  ctx.font = 'bold 12.5px sans-serif';
+  const chipWidths = chips.map((c) => 34 + ctx.measureText(c.label).width + 16);
+  const totalW = chipWidths.reduce((a, b) => a + b, 0) + (chips.length - 1) * 12;
+  let chipX = CANVAS_W / 2 - totalW / 2;
+  for (let i = 0; i < chips.length; i++) {
+    const c = chips[i], w = chipWidths[i];
+    ctx.fillStyle = 'rgba(14,10,30,0.78)';
+    roundRect(ctx, chipX, 476, w, 36, 18);
+    ctx.fill();
+    ctx.strokeStyle = c.color; ctx.globalAlpha = 0.55; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.globalAlpha = 1;
+    chipGlyphs[c.glyph](chipX + 18, 494);
+    ctx.fillStyle = PALETTE.text;
+    ctx.textAlign = 'left';
+    ctx.fillText(c.label, chipX + 32, 495);
+    ctx.textAlign = 'center';
+    chipX += w + 12;
+  }
   ctx.font = '14px sans-serif';
   ctx.fillStyle = PALETTE.textDim;
-  ctx.fillText('Spark — fast and cheap · Frost — slows the march · Mortar — huge splash · Lance — piercing beam', CANVAS_W / 2, 500);
-  ctx.fillText('Set each tower to target First, Strong or Close · Sell any tower back for 70% · Beware the wave-6 Ember Surge', CANVAS_W / 2, 526);
+  ctx.fillText('Every tower upgrades twice · chained kills build your streak · sell any tower back for 70%', CANVAS_W / 2, 542);
 }
 
 // The Core crystal as an end-screen emblem: radiant and rayed on victory,
@@ -1342,6 +1724,32 @@ function drawEndScreen(ctx, state, L, victory) {
   }
   ctx.fillStyle = wash;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  // The air itself celebrates or mourns: gold sparkles rise on victory,
+  // spent embers sink on defeat. Positions are seeded; only the clock moves.
+  for (let i = 0; i < (victory ? 24 : 16); i++) {
+    const sx = sceneryRand(i * 3 + 71) * CANVAS_W;
+    const speed = 12 + sceneryRand(i * 3 + 72) * 22;
+    const drift = victory ? -state.time * speed : state.time * speed;
+    const sy = ((sceneryRand(i * 3 + 73) * CANVAS_H + drift) % CANVAS_H + CANVAS_H) % CANVAS_H;
+    const tw = 0.2 + 0.3 * (0.5 + 0.5 * Math.sin(state.time * 2.6 + i * 1.7));
+    if (victory) {
+      const s = 2 + sceneryRand(i * 3 + 74) * 2.6;
+      ctx.save();
+      ctx.globalAlpha = tw;
+      ctx.strokeStyle = '#ffd76a'; ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(sx - s, sy); ctx.lineTo(sx + s, sy);
+      ctx.moveTo(sx, sy - s); ctx.lineTo(sx, sy + s);
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      ctx.save();
+      ctx.globalAlpha = tw * 0.9;
+      ctx.fillStyle = '#ff6a3d';
+      ctx.beginPath(); ctx.arc(sx, sy, 1.4 + sceneryRand(i * 3 + 74) * 1.4, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
   drawCoreEmblem(ctx, CANVAS_W / 2, 108, 1.35, state.time, victory);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -1403,13 +1811,18 @@ function drawEndScreen(ctx, state, L, victory) {
 function drawPaused(ctx, state) {
   ctx.fillStyle = 'rgba(8,6,20,0.6)';
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  // A bordered panel, so the pause reads as a designed screen, not a label.
+  ctx.fillStyle = 'rgba(14,11,30,0.88)';
+  roundRect(ctx, CANVAS_W / 2 - 215, CANVAS_H / 2 - 66, 430, 132, 14);
+  ctx.fill();
+  ctx.strokeStyle = '#6b5a9e'; ctx.lineWidth = 1.5; ctx.stroke();
   ctx.textAlign = 'center';
   ctx.fillStyle = PALETTE.text;
   ctx.font = 'bold 44px sans-serif';
-  ctx.fillText('PAUSED', CANVAS_W / 2, CANVAS_H / 2 - 10);
+  ctx.fillText('PAUSED', CANVAS_W / 2, CANVAS_H / 2 - 16);
   ctx.font = '18px sans-serif';
   ctx.fillStyle = PALETTE.textDim;
-  ctx.fillText('Press P to resume · R to restart', CANVAS_W / 2, CANVAS_H / 2 + 30);
+  ctx.fillText('Press P to resume · R to restart', CANVAS_W / 2, CANVAS_H / 2 + 28);
 }
 
 // A tower as a title-screen silhouette: black shape, rim light in its own
@@ -1460,7 +1873,7 @@ export function drawGame(ctx, state) {
     ctx.translate((Math.random() - 0.5) * state.shake, (Math.random() - 0.5) * state.shake);
   }
   drawSky(ctx, state.time);
-  drawPath(ctx);
+  drawPath(ctx, state.time);
   drawCore(ctx, state);
   drawPads(ctx, state);
   if (state.mode === 'title') drawTitleBackdropTowers(ctx);
@@ -1470,9 +1883,10 @@ export function drawGame(ctx, state) {
   }
   drawProjectiles(ctx, state);
   drawParticles(ctx, state);
+  drawRings(ctx, state);
   drawFloaters(ctx, state);
   drawForegroundEmbers(ctx, state);
-  drawVignette(ctx);
+  drawVignette(ctx, state);
   drawGhost(ctx, state);
   const L = layout(state);
   if (state.mode !== 'title') drawHud(ctx, state, L);

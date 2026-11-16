@@ -29,6 +29,7 @@ function freshState() {
     particles: [],
     floaters: [],
     tracers: [],
+    rings: [], // expanding shockwave rings (visual only, aged in update)
     pads: PADS,
     selectedPad: -1,
     selectedTower: null,
@@ -63,6 +64,12 @@ function resetRun() {
 function addFloater(x, y, text, color, size = 14) {
   if (state.floaters.length > 40) state.floaters.shift();
   state.floaters.push({ x, y, text, color, size, life: 0.9, maxLife: 0.9, vy: -28 });
+}
+
+// An expanding shockwave ring where something big landed (visual only).
+function addRing(x, y, maxR, color, life = 0.45) {
+  if (state.rings.length > 24) state.rings.shift();
+  state.rings.push({ x, y, maxR, color, life, maxLife: life });
 }
 
 function burst(x, y, color, count, speed, size = 3) {
@@ -138,6 +145,8 @@ function processDeaths() {
     if (e.type === 'boss') {
       // The Colossus going down should shake the valley (visual only).
       burst(e.x, e.y, '#ffd76a', 24, 170, 4);
+      addRing(e.x, e.y, 140, '#ff2d55', 0.7);
+      addRing(e.x, e.y, 95, '#ffd76a', 0.55);
       state.shake = Math.max(state.shake, 11);
       addFloater(e.x, e.y - 34, 'COLOSSUS DOWN!', '#ffd76a', 22);
     }
@@ -177,6 +186,9 @@ function onTowerEvent(ev) {
         '#e3c8ff', 13,
       );
     }
+    // Sparks where the beam bit (visual only), capped so a long pierce
+    // through a packed wave stays readable.
+    for (const h of ev.hits.slice(0, 3)) burst(h.target.x, h.target.y, '#c792ff', 3, 60, 2);
     sfx.lance();
     if (ev.hits.some((h) => h.killed)) sfx.hit();
   } else if (ev.kind === 'chain') {
@@ -185,10 +197,20 @@ function onTowerEvent(ev) {
       color: '#ffe9a8', life: 0.1, maxLife: 0.1,
     });
   } else if (ev.kind === 'lob') {
+    // A puff of smoke drifts up off the mortar's muzzle (visual only).
+    for (let i = 0; i < 3; i++) {
+      state.particles.push({
+        x: ev.tower.x, y: ev.tower.y - 6,
+        vx: (Math.random() - 0.5) * 16, vy: -22 - Math.random() * 14,
+        life: 0.7 + Math.random() * 0.4, maxLife: 1.1, size: 3.5 + Math.random() * 2,
+        color: '#9a92b8', gravity: -26,
+      });
+    }
     sfx.mortar();
   } else if (ev.kind === 'explosion') {
     burst(ev.x, ev.y, '#ff8a3d', 16, 150, 4);
     burst(ev.x, ev.y, '#ffd76a', 8, 90, 3);
+    addRing(ev.x, ev.y, ev.radius * 1.15, '#ffb35c', 0.4);
     state.shake = Math.max(state.shake, 3);
     sfx.explosion();
   }
@@ -231,6 +253,10 @@ function update(dt) {
   for (let i = state.tracers.length - 1; i >= 0; i--) {
     state.tracers[i].life -= dt;
     if (state.tracers[i].life <= 0) state.tracers.splice(i, 1);
+  }
+  for (let i = state.rings.length - 1; i >= 0; i--) {
+    state.rings[i].life -= dt;
+    if (state.rings[i].life <= 0) state.rings.splice(i, 1);
   }
 
   if (state.mode !== 'playing') return;
